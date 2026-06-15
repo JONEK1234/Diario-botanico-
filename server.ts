@@ -1,0 +1,230 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import express from "express";
+import path from "path";
+import fs from "fs";
+import { GoogleGenAI } from "@google/genai";
+import { createServer as createViteServer } from "vite";
+import * as esbuild from "esbuild";
+import AdmZip from "adm-zip";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+// Inizializzazione pigra (lazy initialization) del client Gemini per evitare crash all'avvio se manca la chiave
+let aiClient: GoogleGenAI | null = null;
+function getGeminiClient(): GoogleGenAI | null {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
+    return null;
+  }
+  if (!aiClient) {
+    aiClient = new GoogleGenAI({
+      apiKey: apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+  }
+  return aiClient;
+}
+
+async function startServer() {
+  const app = express();
+  const PORT = 3000;
+
+  app.use(express.json({ limit: '10mb' }));
+
+  // API 1: Curatore Botanico AI (Gemini Assistant)
+  app.post("/api/gemini/curator", async (req, res) => {
+    try {
+      const { plant, currentNotes, recentActivities } = req.body;
+      if (!plant) {
+        return res.status(400).json({ error: "Dati pianta mancanti" });
+      }
+
+      const client = getGeminiClient();
+      if (!client) {
+        // Fallback poetico offline o simulato se non c'è la chiave configurata
+        const simulatedResponses = [
+          `🌿 *Analisi del Curatore* per **${plant.nickname}** (${plant.name}):\n\nQuesta creatura mostra una resilienza eccezionale. Data la sua origine (${plant.origin}) e lo stato attuale (*${plant.status}*), ti consiglio di mantenere un ritmo di cura meditativo. Attenzione alle correnti d'aria fredda. Una nuova foglia è sempre un rito di luce.`,
+          `🌱 *Osservazione curatoriale* per **${plant.nickname}**:\n\nLe sue foglie raccontano storie di luce e pazienza. Mantieni il terreno umido ma mai asfittico. Ricorda che la crescita più vigorosa avviene nel silenzio delle radici. Dedica 5 minuti a pulire le superfici fogliari per agevolare il respiro della linfa.`,
+          `🍃 *Rapporto di crescita* per **${plant.nickname}**:\n\nPresenta uno stato di salute pari al ${plant.health}%. Un valore splendido che riflette la tua cura. Suggerisco di assecondare il ciclo stagionale fornendo un'esposizione indiretta luminosa e concentrando l'attenzione sul ritmo lento e organico della turgidità cellulare.`
+        ];
+        const randomSim = simulatedResponses[Math.floor(Math.random() * simulatedResponses.length)];
+        return res.json({
+          text: `[Modalità Offline / Chiave non impostata - Risposta Simulata Cura]\n\n${randomSim}`
+        });
+      }
+
+      // Prompt dettagliato ed editoriale
+      const prompt = `Sei un Curatore Botanico di alto livello, esperto, appassionato e dal tono poetico, raffinato, intimo e profondamente scientifico ma affettivo.
+Sei responsabile di scrivere una pagina di diario o un commento curatoriale sulla crescita di questa pianta del nostro giardino botanico domestico.
+
+Dettagli della pianta:
+- Nome Scientifico: ${plant.name}
+- Soprannome: ${plant.nickname}
+- Origine: ${plant.origin} (data d'inizio: ${plant.startDate})
+- Descrizione: ${plant.description}
+- Stato attuale: ${plant.status}
+- Salute generale stimata: ${plant.health}%
+- Note personali: ${plant.notes || "Nessuna nota aggiuntiva"}
+- Caratteristiche/Tag: ${plant.tags ? plant.tags.join(", ") : "Nessuno"}
+
+Attività recenti intraprese:
+${recentActivities || "Nessuna registrata recentemente"}
+
+Note addizionali scritte adesso dall'utente:
+"${currentNotes || "Nessuna"}"
+
+Scrivi un paragrafo magnifico, evocativo ed elegante (in italiano fluido e caldo, stile editoriale di rivista di giardinaggio d'arte tipo 'Cabana' o 'The Kinfolk Home'). Fornisci consigli pratici sofisticati, osserva i dettagli affettivi (come l'età calcolata o la forza del suo soprannome) e trasmetti pace, stimolando la cura e l'osservazione. Non elencare noiosamente i dati ricevuti ma incorporali nel flusso naturale di una prosa poetica.`;
+
+      const response = await client.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+        config: {
+          temperature: 0.85,
+        }
+      });
+
+      return res.json({ text: response.text });
+    } catch (error: any) {
+      console.error("Errore chiamata Gemini:", error);
+      res.status(500).json({ error: "Errore durante la generazione dei consigli botanici: " + error.message });
+    }
+  });
+
+  // API 2: Compilatore Universal Offline App (per la build di produzione montato su Express)
+  app.post("/api/download-app", async (req, res) => {
+    try {
+      const type = req.query.type || 'html';
+      const clientData = req.body;
+
+      // 1. Forza la build di produzione di Vite per estrarre il CSS ottimizzato
+      const { build: viteBuild } = await import("vite");
+      await viteBuild({
+        configFile: false,
+        plugins: [
+          (await import("@vitejs/plugin-react")).default(),
+          (await import("@tailwindcss/vite")).default()
+        ],
+        resolve: { alias: { '@': path.resolve(process.cwd(), '.') } },
+        build: { outDir: 'dist', emptyOutDir: true }
+      });
+
+      const distPath = path.resolve(process.cwd(), 'dist');
+
+      if (type === 'html') {
+        const assetsDir = path.join(distPath, 'assets');
+        let compiledCss = '';
+        if (fs.existsSync(assetsDir)) {
+          const files = fs.readdirSync(assetsDir);
+          const cssFile = files.find(f => f.endsWith('.css'));
+          if (cssFile) {
+            compiledCss = fs.readFileSync(path.join(assetsDir, cssFile), 'utf-8');
+          }
+        }
+
+        // Compila istantaneamente il JS in formato non-modulo (IIFE)
+        const esbuildResult = await esbuild.build({
+          entryPoints: ['src/main.tsx'],
+          bundle: true,
+          minify: true,
+          format: 'iife',
+          platform: 'browser',
+          write: false,
+          loader: {
+            '.css': 'empty',
+            '.png': 'dataurl',
+            '.svg': 'dataurl',
+            '.woff2': 'dataurl',
+          },
+          define: {
+            'process.env.NODE_ENV': '"production"'
+          }
+        });
+
+        if (!esbuildResult.outputFiles || esbuildResult.outputFiles.length === 0) {
+          throw new Error("L'assemblaggio tramite Esbuild è fallito.");
+        }
+
+        const compiledJs = esbuildResult.outputFiles[0].text;
+        const dataInjection = clientData ? JSON.stringify(clientData) : 'null';
+
+        const standaloneHtml = `<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diario Botanico Digitale - Archivio Standalone Offline</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+    <style>
+        ${compiledCss}
+    </style>
+</head>
+<body class="bg-[#fbfbf9] text-[#2d3a2e] antialiased">
+    <div id="root"></div>
+    <script>
+        // Dati reali catturati in tempo reale dal client!
+        window.__MY_APP_INITIAL_DATA__ = ${dataInjection};
+    </script>
+    <script>
+        ${compiledJs}
+    </script>
+</body>
+</html>`;
+
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Content-Disposition': 'attachment; filename="diario_botanico_offline.html"',
+        });
+        res.end(standaloneHtml);
+      } else {
+        const zip = new AdmZip();
+        if (fs.existsSync(distPath)) {
+          zip.addLocalFolder(distPath);
+        } else {
+          throw new Error("Esegui prima la build della cartella dist.");
+        }
+
+        const zipBuffer = zip.toBuffer();
+        res.writeHead(200, {
+          'Content-Type': 'application/zip',
+          'Content-Disposition': 'attachment; filename="diario_botanico_build.zip"',
+          'Content-Length': zipBuffer.length,
+        });
+        res.end(zipBuffer);
+      }
+    } catch (error) {
+      console.error("Errore del generatore offline server:", error);
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end(`Errore: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+
+  // Gestione di Vite Middleware: dev vs produzione
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`[Flora Server] running on http://localhost:${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
+  });
+}
+
+startServer();
