@@ -851,48 +851,67 @@ export default function App() {
   };
 
   // --- PORTABILITY DOWNLOAD EXPORTS ---
-  const handleDownloadJSON = () => {
+  const handleDownloadZIP = async () => {
+    showToast("Preparazione e compressione dell'archivio ZIP... 🌿📦");
     try {
-      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state, null, 2));
-      const downloadAnchor = document.createElement('a');
-      downloadAnchor.setAttribute("href", dataStr);
-      downloadAnchor.setAttribute("download", `flora_journal_backup_${new Date().toISOString().split('T')[0]}.json`);
-      document.body.appendChild(downloadAnchor);
-      downloadAnchor.click();
-      downloadAnchor.remove();
-      showToast("Dati della serra scaricati con successo in formato JSON! 🌿💾");
-    } catch (e) {
+      const response = await fetch("/api/backup/zip", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(state)
+      });
+      if (!response.ok) {
+        throw new Error("Impossibile esportare l'archivio ZIP");
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `flora_journal_backup_${new Date().toISOString().split('T')[0]}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      showToast("Dati della serra scaricati con successo in archivio .ZIP! 📦💾");
+    } catch (e: any) {
       console.error(e);
-      showToast("Impossibile scaricare i dati JSON.");
+      showToast("Errore durante l'esportazione ZIP. Riprova.");
     }
   };
 
-  const handleUploadJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const fileReader = new FileReader();
+  const handleUploadZIP = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    fileReader.onload = (event) => {
-      try {
-        const parsed = JSON.parse(event.target?.result as string);
-        if (parsed && typeof parsed === "object") {
-          // Verifica la struttura per evitare caricamenti errati
-          if (Array.isArray(parsed.plants) || Array.isArray(parsed.activities)) {
-            setState(parsed);
-            showToast("I dati della tua serra sono stati ripristinati con successo! 🪴🏡");
-          } else {
-            showToast("Il file JSON non sembra contenere una serra compatibile. ⚠️");
-          }
-        } else {
-          showToast("Formato file JSON non valido.");
-        }
-      } catch (err) {
-        console.error(err);
-        showToast("Errore durante la lettura del file JSON.");
+    showToast("Lettura e scompattamento dell'archivio ZIP in corso... 📦⏳");
+    try {
+      const response = await fetch("/api/backup/unzip", {
+        method: "POST",
+        headers: { "Content-Type": "application/zip" },
+        body: file
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(errText || "Impossibile scompattare l'archivio sul server");
       }
-    };
-    fileReader.readAsText(file);
-    e.target.value = ""; // Consente di ricaricare lo stesso file
+
+      const parsed = await response.json();
+      if (parsed && typeof parsed === "object") {
+        if (Array.isArray(parsed.plants) || Array.isArray(parsed.activities)) {
+          setState(parsed);
+          showToast("La serra biologica è stata ripristinata con successo dall'archivio ZIP! 🪴🏡");
+        } else {
+          showToast("Il file ZIP non contiene una serra compatibile. ⚠️");
+        }
+      } else {
+        showToast("Formato archivio non valido.");
+      }
+    } catch (err: any) {
+      console.error(err);
+      showToast("Errore durante il ripristino dei dati ZIP.");
+    } finally {
+      e.target.value = "";
+    }
   };
 
   const handleDownloadApp = async (format: "html" | "zip") => {
@@ -1088,26 +1107,26 @@ export default function App() {
           {!isReadOnlyMode && (
             <div className="flex items-center gap-1.5">
               <button
-                onClick={handleDownloadJSON}
+                onClick={handleDownloadZIP}
                 className="flex items-center gap-1.5 p-2 px-3.5 bg-emerald-50 border border-emerald-200/50 rounded-full text-xs font-semibold text-emerald-800 hover:bg-emerald-100 transition-all cursor-pointer"
-                title="Scarica tutti i dati della tua serra come file JSON"
+                title="Scarica tutti i dati della tua serra come archivio compresso ZIP"
               >
-                <Download className="w-3.5 h-3.5 text-emerald-600" />
-                Scarica JSON
+                <Download className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
+                Scarica ZIP
               </button>
               <label
-                htmlFor="json-state-upload"
+                htmlFor="zip-state-upload"
                 className="flex items-center gap-1.5 p-2 px-3.5 bg-stone-50 border border-stone-200/50 rounded-full text-xs font-semibold text-stone-800 hover:bg-stone-100 transition-all cursor-pointer"
-                title="Seleziona un file JSON precedentemente salvato per ripristinare i dati"
+                title="Seleziona un archivio ZIP precedentemente salvato per ripristinare i dati della tua serra"
               >
                 <Upload className="w-3.5 h-3.5 text-stone-600" />
-                Carica JSON
+                Carica ZIP
               </label>
               <input
-                id="json-state-upload"
+                id="zip-state-upload"
                 type="file"
-                accept=".json"
-                onChange={handleUploadJSON}
+                accept=".zip"
+                onChange={handleUploadZIP}
                 className="hidden"
                 onClick={(e) => {
                   (e.target as HTMLInputElement).value = "";

@@ -99,6 +99,51 @@ Scrivi un paragrafo magnifico, evocativo ed elegante (in italiano fluido e caldo
     }
   });
 
+  // API: Scarica archivio ZIP con i dati della serra
+  app.post("/api/backup/zip", (req, res) => {
+    try {
+      const stateData = req.body;
+      const zip = new AdmZip();
+      zip.addFile("flora_journal_backup.json", Buffer.from(JSON.stringify(stateData, null, 2), "utf-8"));
+      const zipBuffer = zip.toBuffer();
+
+      res.writeHead(200, {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': 'attachment; filename="flora_journal_backup.zip"',
+        'Content-Length': zipBuffer.length,
+      });
+      res.end(zipBuffer);
+    } catch (error) {
+      console.error("Errore esportazione ZIP:", error);
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end("Errore durante la generazione dell'archivio ZIP.");
+    }
+  });
+
+  // API: Ripristina archivio ZIP con i dati della serra
+  app.post("/api/backup/unzip", express.raw({ type: "application/zip", limit: "15mb" }), (req, res) => {
+    try {
+      const zipBuffer = req.body;
+      if (!zipBuffer || zipBuffer.length === 0) {
+        return res.status(400).json({ error: "Nessun file ZIP ricevuto" });
+      }
+
+      const zip = new AdmZip(zipBuffer);
+      const zipEntries = zip.getEntries();
+      const backupEntry = zipEntries.find(entry => entry.entryName.endsWith(".json"));
+      if (!backupEntry) {
+        return res.status(400).json({ error: "Nessun file JSON di backup trovato all'interno dello ZIP" });
+      }
+
+      const jsonDataString = backupEntry.getData().toString("utf-8");
+      const stateObj = JSON.parse(jsonDataString);
+      res.json(stateObj);
+    } catch (error: any) {
+      console.error("Errore decrittazione ZIP:", error);
+      res.status(500).json({ error: "Errore durante l'elaborazione del file ZIP: " + error.message });
+    }
+  });
+
   // API 2: Compilatore Universal Offline App (per la build di produzione montato su Express)
   app.post("/api/download-app", async (req, res) => {
     try {
