@@ -214,6 +214,18 @@ export default function App() {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Stato per la gestione della cancellazione di elementi tramite pressione prolungata (Long Press)
+  const [deleteConfirmItem, setDeleteConfirmItem] = useState<{
+    id: string;
+    parentPlantId?: string; // Utilizzato per eliminare le note di diario di una specifica pianta
+    type: "activity" | "diary" | "completed-activity";
+    title: string;
+  } | null>(null);
+
+  // Per tracciare la pressione prolungata
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isLongPressActive = useRef<boolean>(false);
+
   // Notifiche Custom
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -583,6 +595,69 @@ export default function App() {
       activities: prev.activities.filter(act => act.id !== id)
     }));
     showToast("Faccenda rimossa definitivamente.");
+  };
+
+  const handleDeleteDiaryEntry = (plantId: string, entryId: string) => {
+    if (isReadOnlyMode) {
+      showToast("La serra è in sola lettura. Modifiche disabilitate. 🌿");
+      return;
+    }
+    setState(prev => ({
+      ...prev,
+      plants: prev.plants.map(p => {
+        if (p.id === plantId) {
+          return {
+            ...p,
+            diary: (p.diary || []).filter(d => d.id !== entryId)
+          };
+        }
+        return p;
+      })
+    }));
+    showToast("Voce della cronologia eliminata definitivamente. 📒");
+  };
+
+  // Funzioni helper per la gestione degli eventi di Pressione Prolungata (Long Press)
+  const handleLongPressStart = (
+    e: React.MouseEvent | React.TouchEvent,
+    id: string,
+    type: "activity" | "diary" | "completed-activity",
+    title: string,
+    parentPlantId?: string
+  ) => {
+    if (isReadOnlyMode) return;
+    isLongPressActive.current = false;
+
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+    }
+
+    longPressTimerRef.current = setTimeout(() => {
+      isLongPressActive.current = true;
+      if (typeof navigator !== "undefined" && navigator.vibrate) {
+        navigator.vibrate(40); // Piccolo feedback aptico sui dispositivi mobili supportati
+      }
+      setDeleteConfirmItem({ id, type, title, parentPlantId });
+    }, 700);
+  };
+
+  const handleLongPressEnd = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const handleElementClick = (e: React.MouseEvent | React.TouchEvent, normalAction: () => void) => {
+    if (isLongPressActive.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      setTimeout(() => {
+        isLongPressActive.current = false;
+      }, 50);
+      return;
+    }
+    normalAction();
   };
 
   const handleAddCustomActivity = (e: React.FormEvent) => {
@@ -1423,7 +1498,16 @@ export default function App() {
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: index * 0.05 }}
-                        className="relative bento-card p-4 bg-white"
+                        className="relative bento-card p-4 bg-white active:scale-[0.99] select-none transition-all cursor-pointer hover:border-red-100"
+                        onMouseDown={(e) => handleLongPressStart(e, entry.id, "diary", entry.eventTitle, selectedPlant.id)}
+                        onTouchStart={(e) => handleLongPressStart(e, entry.id, "diary", entry.eventTitle, selectedPlant.id)}
+                        onMouseUp={handleLongPressEnd}
+                        onTouchEnd={handleLongPressEnd}
+                        onMouseLeave={handleLongPressEnd}
+                        onClick={(e) => handleElementClick(e, () => {
+                          showToast("Tieni premuto per eliminare questa nota dal diario biologico. 📒");
+                        })}
+                        title={isReadOnlyMode ? "Cronologia in sola lettura" : "Tieni premuto per eliminare questa nota"}
                       >
                         {/* Dot exactly like the design timeline */}
                         <div
@@ -1506,15 +1590,20 @@ export default function App() {
                 return (
                   <motion.div
                     key={a.id}
-                    title={isReadOnlyMode ? "Serra in sola lettura" : "Clicca per completare"}
-                    onClick={() => {
+                    title={isReadOnlyMode ? "Serra in sola lettura" : "Tieni premuto per eliminare • Clicca per completare"}
+                    onMouseDown={(e) => handleLongPressStart(e, a.id, "activity", a.title)}
+                    onTouchStart={(e) => handleLongPressStart(e, a.id, "activity", a.title)}
+                    onMouseUp={handleLongPressEnd}
+                    onTouchEnd={handleLongPressEnd}
+                    onMouseLeave={handleLongPressEnd}
+                    onClick={(e) => handleElementClick(e, () => {
                       if (isReadOnlyMode) {
                         showToast("Sola visualizzazione: impossibile modificare i doveri.");
                         return;
                       }
                       handleToggleActivity(a.id);
-                    }}
-                    className={`p-3 rounded-2xl border cursor-pointer hover:bg-slate-50 transition-all flex items-start gap-2.5 ${
+                    })}
+                    className={`p-3 rounded-2xl border cursor-pointer hover:bg-[#fff9f9]/40 hover:border-red-100 transition-all select-none active:scale-[0.98] flex items-start gap-2.5 ${
                       isUrgent ? "border-amber-200 bg-amber-50/10" : "border-[#e2e2d8] bg-white"
                     }`}
                   >
@@ -1590,7 +1679,19 @@ export default function App() {
             <h4 className="text-xs font-mono uppercase tracking-widest text-[#8e9299] font-bold">Memoria Storica Compiuta</h4>
             <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1 flex flex-col gap-1">
               {state.activities.filter(a => a.status === "completed").slice(0, 3).map(a => (
-                <div key={a.id} className="p-3 bg-[#fafafa] hover:bg-slate-50/50 rounded-xl border border-[#e2e2d8] text-[10px] text-sage-600 space-y-1">
+                <div 
+                  key={a.id} 
+                  title={isReadOnlyMode ? "Cronologia in sola lettura" : "Tieni premuto per eliminare permanentemente"}
+                  onMouseDown={(e) => handleLongPressStart(e, a.id, "completed-activity", a.title)}
+                  onTouchStart={(e) => handleLongPressStart(e, a.id, "completed-activity", a.title)}
+                  onMouseUp={handleLongPressEnd}
+                  onTouchEnd={handleLongPressEnd}
+                  onMouseLeave={handleLongPressEnd}
+                  onClick={(e) => handleElementClick(e, () => {
+                    showToast("Tieni premuto su questa faccenda chiusa per rimuoverla dallo storico biologico. 🏷️");
+                  })}
+                  className="p-3 bg-[#fafafa] hover:bg-red-50/10 hover:border-red-100 active:scale-[0.98] select-none transition-all cursor-pointer rounded-xl border border-[#e2e2d8] text-[10px] text-sage-600 space-y-1"
+                >
                   <div className="flex items-center gap-1 text-[#2d3a27] font-semibold uppercase text-[9px]">
                     <CheckSquare className="w-3 h-3 text-[#7e8c69] flex-shrink-0" />
                     <span>{a.title}</span>
@@ -3275,6 +3376,69 @@ export default function App() {
                       Copia Link
                     </>
                   )}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+ 
+      {/* --- MODALE 10: CONFERMA RIMOZIONE ELEMENTO (LONG PRESS) --- */}
+      <AnimatePresence>
+        {deleteConfirmItem && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-55">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-3xl border border-[#e4e8e1] p-6 max-w-sm w-full space-y-4 shadow-2xl font-sans"
+            >
+              <div className="flex items-center gap-3 pb-2 border-b border-stone-100">
+                <div className="p-2 bg-red-50 text-red-600 rounded-xl">
+                  <Trash2 className="w-5 h-5 animate-pulse" />
+                </div>
+                <div>
+                  <h3 className="font-serif font-bold text-stone-850 text-sm">Rimuovere elemento?</h3>
+                  <p className="text-[9px] font-mono text-stone-400 uppercase tracking-wider">Azione Irreversibile</p>
+                </div>
+              </div>
+
+              <div className="space-y-2 text-xs text-[#5a5a40]">
+                <p>Vuoi eliminare definitivamente questa voce?</p>
+                <div className="p-3 bg-[#fafaf5] rounded-xl border border-stone-150 italic font-medium font-serif text-[#2d3a27] text-left">
+                  "{deleteConfirmItem.title}"
+                </div>
+                <p className="text-[10px] text-stone-400 font-mono text-left">
+                  {deleteConfirmItem.type === "diary" 
+                    ? "La nota sarà rimossa permanentemente dalla cronologia biologica della pianta." 
+                    : deleteConfirmItem.type === "completed-activity"
+                    ? "La faccenda completata sparirà per sempre dallo storico."
+                    : "L'attività programmata sarà cancellata dall'agenda dei prossimi giorni della pianta."}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirmItem(null)}
+                  className="py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-700 font-mono text-[10px] rounded-xl font-bold transition-all cursor-pointer text-center"
+                >
+                  Annulla
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const item = deleteConfirmItem;
+                    setDeleteConfirmItem(null); // Chiude subito la modale con fluidità
+                    if (item.type === "diary" && item.parentPlantId) {
+                      handleDeleteDiaryEntry(item.parentPlantId, item.id);
+                    } else {
+                      handleDeleteGlobalActivity(item.id);
+                    }
+                  }}
+                  className="py-2.5 bg-red-600 hover:bg-red-700 text-white font-mono text-[10px] rounded-xl font-bold transition-all cursor-pointer text-center"
+                >
+                  Sì, Elimina
                 </button>
               </div>
             </motion.div>
