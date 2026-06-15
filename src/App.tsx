@@ -176,8 +176,8 @@ export default function App() {
     dueDate: new Date().toISOString().split("T")[0]
   });
 
-  // Modalità Sola Lettura per link condivisi (#share=)
-  const isReadOnlyMode = typeof window !== "undefined" && window.location.hash.includes("share=");
+  // Modalità Sola Lettura per link condivisi (#share= o #sharez=)
+  const isReadOnlyMode = typeof window !== "undefined" && (window.location.hash.includes("share=") || window.location.hash.includes("sharez="));
 
   // Riferimenti per Auto-Scroll Smooth
   const detailsSectionRef = useRef<HTMLDivElement>(null);
@@ -237,14 +237,52 @@ export default function App() {
 
   // Auto-salvataggio nel localStorage
   useEffect(() => {
-    localStorage.setItem("flora_journal_db", JSON.stringify(state));
-  }, [state]);
+    if (!isReadOnlyMode) {
+      localStorage.setItem("flora_journal_db", JSON.stringify(state));
+    }
+  }, [state, isReadOnlyMode]);
 
   useEffect(() => {
-    if (selectedPlantId) {
+    if (selectedPlantId && !isReadOnlyMode) {
       localStorage.setItem("flora_selected_plant_id", selectedPlantId);
     }
-  }, [selectedPlantId]);
+  }, [selectedPlantId, isReadOnlyMode]);
+
+  // Caricamento asincrono per link condivisi compressi (#sharez=)
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.location.hash.startsWith("#sharez=")) {
+      const loadZipShare = async () => {
+        try {
+          const hashData = window.location.hash.replace("#sharez=", "");
+          const zip = new JSZip();
+          const content = await zip.loadAsync(hashData, { base64: true });
+          const backupFile = Object.keys(content.files).find(name => name.endsWith(".json"));
+          if (!backupFile) {
+            showToast("Nessun dato valido trovato nel link compresso. ⚠️");
+            return;
+          }
+          const jsonStr = await content.files[backupFile].async("text");
+          const parsed = JSON.parse(jsonStr);
+          if (parsed && typeof parsed === "object" && (Array.isArray(parsed.plants) || parsed.plants)) {
+            setState({
+              plants: parsed.plants || [],
+              activities: parsed.activities || [],
+              smartTrackers: parsed.smartTrackers || [],
+              settings: parsed.settings || { userName: "Ospite", gardenName: "Giardino Condiviso", offlineMode: false }
+            });
+            if (parsed.plants && parsed.plants.length > 0) {
+              setSelectedPlantId(parsed.plants[0].id);
+            }
+            showToast("Serra condivisa caricata e scompattata con successo! 🌿✨");
+          }
+        } catch (e: any) {
+          console.error("Errore decodifica link compresso:", e);
+          showToast("Errore durante il caricamento del link compresso.");
+        }
+      };
+      loadZipShare();
+    }
+  }, []);
 
   // Filtro piante vive e morte
   const activePlants = state.plants.filter(p => p.isDead !== true);
@@ -977,15 +1015,38 @@ export default function App() {
   };
 
   // --- CONDIVISIONE LINK COPIA STATO ---
-  const handleCopyShareLink = () => {
+  const handleCopyShareLink = async () => {
+    showToast("Generazione link compresso... ⏳");
     try {
+      // Per mantenere il link super leggero e corto, rimuoviamo le immagini pesanti in Base64
+      const sanitizedPlants = state.plants.map(p => {
+        const cleanImageUrl = p.imageUrl && p.imageUrl.startsWith("data:") ? "" : p.imageUrl;
+        const cleanDiary = p.diary ? p.diary.map(d => ({
+          ...d,
+          imageUrl: d.imageUrl && d.imageUrl.startsWith("data:") ? "" : d.imageUrl
+        })) : [];
+
+        return {
+          ...p,
+          imageUrl: cleanImageUrl,
+          diary: cleanDiary
+        };
+      });
+
       const stateString = JSON.stringify({
-        plants: state.plants,
+        plants: sanitizedPlants,
         activities: state.activities,
         settings: state.settings
       });
-      const encoded = btoa(encodeURIComponent(stateString));
-      const shareUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}#share=${encoded}`;
+
+      const zip = new JSZip();
+      zip.file("flora_backup.json", stateString);
+      const base64Zip = await zip.generateAsync({
+        type: "base64",
+        compression: "DEFLATE",
+        compressionOptions: { level: 9 }
+      });
+      const shareUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}#sharez=${base64Zip}`;
       
       setGeneratedShareUrl(shareUrl);
       setIsShareOpen(true);
@@ -995,7 +1056,7 @@ export default function App() {
         navigator.clipboard.writeText(shareUrl)
           .then(() => {
             setIsCopiedSuccess(true);
-            showToast("Link della serra generato e copiato negli appunti!");
+            showToast("Link compresso generato e copiato negli appunti! 🌿✨");
           })
           .catch(() => {
             setIsCopiedSuccess(false);
@@ -1006,7 +1067,8 @@ export default function App() {
         showToast("Link generato! Copialo manualmente.");
       }
     } catch (e) {
-      showToast("Errore durante la codifica del link.");
+      console.error(e);
+      showToast("Errore durante la codifica compressa del link.");
     }
   };
 
