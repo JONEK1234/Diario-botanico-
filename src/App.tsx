@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import { JournalState, Plant, CareActivity, PlantStatus, PlantOrigin, DiaryEntry, SmartTracker } from "./types";
 import { PRESET_PLANTS, PRESET_ACTIVITIES } from "./data/presetPlants";
+import JSZip from "jszip";
 
 export default function App() {
   // 1. CARICAMENTO STATO INIZIALE (Supporto Standalone Offline ed State Management locale)
@@ -854,15 +855,10 @@ export default function App() {
   const handleDownloadZIP = async () => {
     showToast("Preparazione e compressione dell'archivio ZIP... 🌿📦");
     try {
-      const response = await fetch("/api/backup/zip", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(state)
-      });
-      if (!response.ok) {
-        throw new Error("Impossibile esportare l'archivio ZIP");
-      }
-      const blob = await response.blob();
+      const zip = new JSZip();
+      zip.file("flora_journal_backup.json", JSON.stringify(state, null, 2));
+      const blob = await zip.generateAsync({ type: "blob" });
+
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -884,18 +880,15 @@ export default function App() {
 
     showToast("Lettura e scompattamento dell'archivio ZIP in corso... 📦⏳");
     try {
-      const response = await fetch("/api/backup/unzip", {
-        method: "POST",
-        headers: { "Content-Type": "application/zip" },
-        body: file
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(errText || "Impossibile scompattare l'archivio sul server");
+      const zip = new JSZip();
+      const content = await zip.loadAsync(file);
+      const backupFile = Object.keys(content.files).find(name => name.endsWith(".json"));
+      if (!backupFile) {
+        throw new Error("Nessun file JSON di backup trovato all'interno dello ZIP");
       }
+      const jsonStr = await content.files[backupFile].async("text");
+      const parsed = JSON.parse(jsonStr);
 
-      const parsed = await response.json();
       if (parsed && typeof parsed === "object") {
         if (Array.isArray(parsed.plants) || Array.isArray(parsed.activities)) {
           setState(parsed);
@@ -908,7 +901,7 @@ export default function App() {
       }
     } catch (err: any) {
       console.error(err);
-      showToast("Errore durante il ripristino dei dati ZIP.");
+      showToast("Errore durante il ripristino: " + err.message);
     } finally {
       e.target.value = "";
     }
