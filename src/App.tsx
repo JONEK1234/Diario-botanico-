@@ -851,6 +851,50 @@ export default function App() {
   };
 
   // --- PORTABILITY DOWNLOAD EXPORTS ---
+  const handleDownloadJSON = () => {
+    try {
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `flora_journal_backup_${new Date().toISOString().split('T')[0]}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      showToast("Dati della serra scaricati con successo in formato JSON! 🌿💾");
+    } catch (e) {
+      console.error(e);
+      showToast("Impossibile scaricare i dati JSON.");
+    }
+  };
+
+  const handleUploadJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fileReader = new FileReader();
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    fileReader.onload = (event) => {
+      try {
+        const parsed = JSON.parse(event.target?.result as string);
+        if (parsed && typeof parsed === "object") {
+          // Verifica la struttura per evitare caricamenti errati
+          if (Array.isArray(parsed.plants) || Array.isArray(parsed.activities)) {
+            setState(parsed);
+            showToast("I dati della tua serra sono stati ripristinati con successo! 🪴🏡");
+          } else {
+            showToast("Il file JSON non sembra contenere una serra compatibile. ⚠️");
+          }
+        } else {
+          showToast("Formato file JSON non valido.");
+        }
+      } catch (err) {
+        console.error(err);
+        showToast("Errore durante la lettura del file JSON.");
+      }
+    };
+    fileReader.readAsText(file);
+    e.target.value = ""; // Consente di ricaricare lo stesso file
+  };
+
   const handleDownloadApp = async (format: "html" | "zip") => {
     showToast("Preparazione ed esportazione della tua serra digitale in corso...");
     try {
@@ -1042,14 +1086,34 @@ export default function App() {
           </button>
 
           {!isReadOnlyMode && (
-            <button
-              onClick={() => handleDownloadApp("html")}
-              className="flex items-center gap-1.5 p-2 px-3.5 bg-sage-50 border border-sage-200/50 rounded-full text-xs font-semibold text-sage-800 hover:bg-sage-100 transition-all font-serif italic cursor-pointer"
-              title="Scarica come app HTML singola per sempre offline"
-            >
-              <Download className="w-3.5 h-3.5 text-sage-600 animate-pulse" />
-              Salva Offline .HTML
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={handleDownloadJSON}
+                className="flex items-center gap-1.5 p-2 px-3.5 bg-emerald-50 border border-emerald-200/50 rounded-full text-xs font-semibold text-emerald-800 hover:bg-emerald-100 transition-all cursor-pointer"
+                title="Scarica tutti i dati della tua serra come file JSON"
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-600" />
+                Scarica JSON
+              </button>
+              <label
+                htmlFor="json-state-upload"
+                className="flex items-center gap-1.5 p-2 px-3.5 bg-stone-50 border border-stone-200/50 rounded-full text-xs font-semibold text-stone-800 hover:bg-stone-100 transition-all cursor-pointer"
+                title="Seleziona un file JSON precedentemente salvato per ripristinare i dati"
+              >
+                <Upload className="w-3.5 h-3.5 text-stone-600" />
+                Carica JSON
+              </label>
+              <input
+                id="json-state-upload"
+                type="file"
+                accept=".json"
+                onChange={handleUploadJSON}
+                className="hidden"
+                onClick={(e) => {
+                  (e.target as HTMLInputElement).value = "";
+                }}
+              />
+            </div>
           )}
 
           {!isReadOnlyMode && (
