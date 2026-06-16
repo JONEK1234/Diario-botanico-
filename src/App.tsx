@@ -254,9 +254,17 @@ export default function App() {
     if (typeof window !== "undefined" && window.location.hash.startsWith("#sharez=")) {
       const loadZipShare = async () => {
         try {
-          const hashData = window.location.hash.replace("#sharez=", "");
+          const hashRaw = window.location.hash.replace("#sharez=", "");
+          // Decodifica la stringa URL-safe ripristinando i caratteri base64 standard (+ e /)
+          let base64 = decodeURIComponent(hashRaw)
+            .replace(/-/g, "+")
+            .replace(/_/g, "/");
+          // Ripristina l'eventuale padding mancante
+          while (base64.length % 4 !== 0) {
+            base64 += "=";
+          }
           const zip = new JSZip();
-          const content = await zip.loadAsync(hashData, { base64: true });
+          const content = await zip.loadAsync(base64, { base64: true });
           const backupFile = Object.keys(content.files).find(name => name.endsWith(".json"));
           if (!backupFile) {
             showToast("Nessun dato valido trovato nel link compresso. ⚠️");
@@ -1022,15 +1030,18 @@ export default function App() {
       // Helper per rimpicciolire ed alleggerire le immagini Base64 (data:) di oltre il 98%
       const shrinkBase64 = (base64Str: string): Promise<string> => {
         return new Promise((resolve) => {
-          if (!base64Str || !base64Str.startsWith("data:")) {
-            resolve(base64Str || "");
+          if (!base64Str) {
+            resolve("");
+            return;
+          }
+          if (!base64Str.startsWith("data:")) {
+            resolve(base64Str);
             return;
           }
           const img = new Image();
-          img.src = base64Str;
           img.onload = () => {
-            const maxWidth = 120; // Dimensione ottimale e super-leggera per i piccoli avatar e le anteprime
-            const maxHeight = 120;
+            const maxWidth = 80; // Dimensione ottimale e super-leggera per avatar e icone
+            const maxHeight = 80;
             let width = img.width;
             let height = img.height;
 
@@ -1052,8 +1063,8 @@ export default function App() {
             const ctx = canvas.getContext("2d");
             if (ctx) {
               ctx.drawImage(img, 0, 0, width, height);
-              // Qualità 0.35 ottiene immagini incredibilmente leggere ma perfettamente distinguibili
-              resolve(canvas.toDataURL("image/jpeg", 0.35));
+              // Qualità 0.25 ottiene immagini incredibilmente leggere ma perfettamente distinguibili
+              resolve(canvas.toDataURL("image/jpeg", 0.25));
             } else {
               resolve(base64Str);
             }
@@ -1061,41 +1072,46 @@ export default function App() {
           img.onerror = () => {
             resolve(base64Str);
           };
+          img.src = base64Str; // Carica l'immagine solo dopo aver impostato onload/onerror!
         });
       };
 
-      // Elabora asincronamente tutte le piante riducendo i pesi delle foto
+      // Elabora asincronamente tutte le piante riducendo i pesi delle foto e preservandone tutti i campi nativi per non perdere informazioni
       const sanitizedPlants = await Promise.all(state.plants.map(async p => {
         const cleanImageUrl = p.imageUrl ? await shrinkBase64(p.imageUrl) : "";
-        // Conserviamo solo gli ultimi 4 diari per risparmiare ulteriore spazio
+        // Conserviamo solo gli ultimi 3 diari per risparmiare moltissimo spazio
         const sortedDiary = p.diary ? [...p.diary].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()) : [];
-        const slicedDiary = sortedDiary.slice(0, 4);
+        const slicedDiary = sortedDiary.slice(0, 3);
         const cleanDiary = await Promise.all(slicedDiary.map(async d => ({
           id: d.id,
           eventTitle: d.eventTitle,
-          notes: d.notes ? d.notes.slice(0, 150) : "", // Taglio leggero note
+          notes: d.notes ? d.notes.slice(0, 100) : "", // Limita lunghezza appunti diari condivisi
           date: d.date,
-          activityType: d.activityType,
+          category: d.category || "generale",
           imageUrl: d.imageUrl ? await shrinkBase64(d.imageUrl) : "" // Comprime anche la foto della nota di diario!
         })));
 
         return {
           id: p.id,
           name: p.name,
-          nickname: p.nickname,
-          species: p.species,
-          status: p.status,
+          nickname: p.nickname || "",
+          species: p.species || "",
           origin: p.origin,
-          createdAt: p.createdAt,
-          isDead: p.isDead,
-          deathNotes: p.deathNotes ? p.deathNotes.slice(0, 150) : "",
-          deathDate: p.deathDate,
+          startDate: p.startDate,
+          description: p.description || "",
           imageUrl: cleanImageUrl,
-          diary: cleanDiary
+          status: p.status,
+          health: p.health || 100,
+          notes: p.notes || "",
+          tags: p.tags || [],
+          diary: cleanDiary,
+          isDead: p.isDead ? true : undefined,
+          deathNotes: p.deathNotes ? p.deathNotes.slice(0, 100) : undefined,
+          deathDate: p.deathDate || undefined
         };
       }));
 
-      // Filtra le attività: tieni solo quelle attive (todo) e le ultime 5 completate (recenti)
+      // Filtra le attività: tieni solo quelle attive (todo) e le ultime 3 completate (recenti)
       const activeActivities = state.activities.filter(a => a.status === "todo");
       const completedActivities = state.activities.filter(a => a.status === "completed")
         .sort((a, b) => {
@@ -1103,7 +1119,7 @@ export default function App() {
           const tB = b.completedAt ? new Date(b.completedAt).getTime() : 0;
           return tB - tA;
         });
-      const recentCompleted = completedActivities.slice(0, 5);
+      const recentCompleted = completedActivities.slice(0, 3);
       const sanitizedActivities = [...activeActivities, ...recentCompleted].map(a => ({
         id: a.id,
         plantId: a.plantId,
@@ -1116,7 +1132,7 @@ export default function App() {
         completedNotes: a.completedNotes
       }));
 
-      // Filtra i tracciatori: solo attivi e i 3 completati più di recente
+      // Filtra i tracciatori: solo attivi e 2 completati più di recente
       const trackersList = state.smartTrackers || [];
       const activeTrackers = trackersList.filter(t => !t.isCompleted);
       const completedTrackers = trackersList.filter(t => t.isCompleted)
@@ -1125,7 +1141,7 @@ export default function App() {
           const tB = b.completedAt ? new Date(b.completedAt).getTime() : 0;
           return tB - tA;
         });
-      const recentTrackers = completedTrackers.slice(0, 3);
+      const recentTrackers = completedTrackers.slice(0, 2);
       const sanitizedTrackers = [...activeTrackers, ...recentTrackers].map(t => ({
         id: t.id,
         title: t.title,
@@ -1150,7 +1166,14 @@ export default function App() {
         compression: "DEFLATE",
         compressionOptions: { level: 9 }
       });
-      const shareUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}#sharez=${base64Zip}`;
+
+      // Rendi la stringa base64 sicura per l'URL per evitare caratteri speciali soggetti a traduzioni errate (+, /, =)
+      const urlSafeBase64 = base64Zip
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=/g, "");
+
+      const shareUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}#sharez=${urlSafeBase64}`;
       
       setGeneratedShareUrl(shareUrl);
       setIsShareOpen(true);
