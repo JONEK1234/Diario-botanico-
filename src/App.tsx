@@ -1017,21 +1017,67 @@ export default function App() {
 
   // --- CONDIVISIONE LINK COPIA STATO ---
   const handleCopyShareLink = async () => {
-    showToast("Generazione link compresso ultra-leggero... ⏳");
+    showToast("Compressione intelligente dati e immagini... ⏳");
     try {
-      // Per mantenere il link super leggero e corto, rimuoviamo le immagini pesanti in Base64 e limitiamo lo storico superfluo
-      const sanitizedPlants = state.plants.map(p => {
-        const cleanImageUrl = p.imageUrl && p.imageUrl.startsWith("data:") ? "" : p.imageUrl;
-        // Conserviamo solo gli ultimi 5 diari per risparmiare moltissimo spazio
+      // Helper per rimpicciolire ed alleggerire le immagini Base64 (data:) di oltre il 98%
+      const shrinkBase64 = (base64Str: string): Promise<string> => {
+        return new Promise((resolve) => {
+          if (!base64Str || !base64Str.startsWith("data:")) {
+            resolve(base64Str || "");
+            return;
+          }
+          const img = new Image();
+          img.src = base64Str;
+          img.onload = () => {
+            const maxWidth = 120; // Dimensione ottimale e super-leggera per i piccoli avatar e le anteprime
+            const maxHeight = 120;
+            let width = img.width;
+            let height = img.height;
+
+            if (width > height) {
+              if (width > maxWidth) {
+                height = Math.round((height * maxWidth) / width);
+                width = maxWidth;
+              }
+            } else {
+              if (height > maxHeight) {
+                width = Math.round((width * maxHeight) / height);
+                height = maxHeight;
+              }
+            }
+
+            const canvas = document.createElement("canvas");
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, width, height);
+              // Qualità 0.35 ottiene immagini incredibilmente leggere ma perfettamente distinguibili
+              resolve(canvas.toDataURL("image/jpeg", 0.35));
+            } else {
+              resolve(base64Str);
+            }
+          };
+          img.onerror = () => {
+            resolve(base64Str);
+          };
+        });
+      };
+
+      // Elabora asincronamente tutte le piante riducendo i pesi delle foto
+      const sanitizedPlants = await Promise.all(state.plants.map(async p => {
+        const cleanImageUrl = p.imageUrl ? await shrinkBase64(p.imageUrl) : "";
+        // Conserviamo solo gli ultimi 4 diari per risparmiare ulteriore spazio
         const sortedDiary = p.diary ? [...p.diary].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()) : [];
-        const slicedDiary = sortedDiary.slice(0, 5);
-        const cleanDiary = slicedDiary.map(d => ({
+        const slicedDiary = sortedDiary.slice(0, 4);
+        const cleanDiary = await Promise.all(slicedDiary.map(async d => ({
           id: d.id,
           eventTitle: d.eventTitle,
-          notes: d.notes ? d.notes.slice(0, 300) : "", // Limita lunghezza appunti diari condivisi
+          notes: d.notes ? d.notes.slice(0, 150) : "", // Taglio leggero note
           date: d.date,
-          activityType: d.activityType
-        }));
+          activityType: d.activityType,
+          imageUrl: d.imageUrl ? await shrinkBase64(d.imageUrl) : "" // Comprime anche la foto della nota di diario!
+        })));
 
         return {
           id: p.id,
@@ -1042,12 +1088,12 @@ export default function App() {
           origin: p.origin,
           createdAt: p.createdAt,
           isDead: p.isDead,
-          deathNotes: p.deathNotes ? p.deathNotes.slice(0, 300) : "",
+          deathNotes: p.deathNotes ? p.deathNotes.slice(0, 150) : "",
           deathDate: p.deathDate,
           imageUrl: cleanImageUrl,
           diary: cleanDiary
         };
-      });
+      }));
 
       // Filtra le attività: tieni solo quelle attive (todo) e le ultime 5 completate (recenti)
       const activeActivities = state.activities.filter(a => a.status === "todo");
@@ -1114,7 +1160,7 @@ export default function App() {
         navigator.clipboard.writeText(shareUrl)
           .then(() => {
             setIsCopiedSuccess(true);
-            showToast("Link ultra-compresso copiato in memoria! 🌿✨");
+            showToast("Link ultra-compresso (con foto) copiato! 🌿✨");
           })
           .catch(() => {
             setIsCopiedSuccess(false);
@@ -3350,7 +3396,7 @@ export default function App() {
         {isHistoryOpen && (() => {
           const trackersList = state.smartTrackers || [];
           return (
-            <div className="fixed inset-0 bg-black/50 backdrop-blur-md flex items-center justify-center p-4 z-55">
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-md flex items-center justify-center p-4 z-[80]">
               <motion.div
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
@@ -3614,7 +3660,7 @@ export default function App() {
       {/* --- MODALE 10: CONFERMA RIMOZIONE ELEMENTO (LONG PRESS) --- */}
       <AnimatePresence>
         {deleteConfirmItem && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-55">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[80]">
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -3692,7 +3738,7 @@ export default function App() {
       {/* --- MODALE 11: LIGHTBOX ANTEPRIMA IMMAGINI SCHERMO INTERO --- */}
       <AnimatePresence>
         {fullscreenImageUrl && (
-          <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 z-60 select-none">
+          <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 z-[100] select-none">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
