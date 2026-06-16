@@ -40,6 +40,57 @@ async function startServer() {
 
   app.use(express.json({ limit: '10mb' }));
 
+  const SHARES_DIR = path.join(process.cwd(), "shares");
+  if (!fs.existsSync(SHARES_DIR)) {
+    fs.mkdirSync(SHARES_DIR, { recursive: true });
+  }
+
+  // API: Salva una condivisione sul server generandone un ID corto
+  app.post("/api/shares", (req, res) => {
+    try {
+      const stateData = req.body;
+      if (!stateData) {
+        return res.status(400).json({ error: "Dati non validi" });
+      }
+
+      // Genera un ID corto casuale di 8 caratteri alfanumerici
+      const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+      let shareId = "";
+      for (let i = 0; i < 8; i++) {
+        shareId += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+
+      const filePath = path.join(SHARES_DIR, `${shareId}.json`);
+      fs.writeFileSync(filePath, JSON.stringify(stateData, null, 2), "utf-8");
+
+      res.json({ id: shareId });
+    } catch (error: any) {
+      console.error("Errore salvataggio condivisione:", error);
+      res.status(500).json({ error: "Errore durante il salvataggio sul server: " + error.message });
+    }
+  });
+
+  // API: Recupera una condivisione tramite ID corto
+  app.get("/api/shares/:id", (req, res) => {
+    try {
+      const { id } = req.params;
+      if (!/^[a-zA-Z0-9]+$/.test(id)) {
+        return res.status(400).json({ error: "ID non valido" });
+      }
+
+      const filePath = path.join(SHARES_DIR, `${id}.json`);
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: "Condivisione non trovata" });
+      }
+
+      const data = fs.readFileSync(filePath, "utf-8");
+      res.json(JSON.parse(data));
+    } catch (error: any) {
+      console.error("Errore lettura condivisione:", error);
+      res.status(500).json({ error: "Errore durante il recupero dei dati dal server: " + error.message });
+    }
+  });
+
   // API 1: Curatore Botanico AI (Gemini Assistant)
   app.post("/api/gemini/curator", async (req, res) => {
     try {

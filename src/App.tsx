@@ -249,12 +249,39 @@ export default function App() {
     }
   }, [selectedPlantId, isReadOnlyMode]);
 
-  // Caricamento asincrono per link condivisi compressi (#sharez=)
+  // Caricamento asincrono per link condivisi (ID server o compressi offline)
   useEffect(() => {
     if (typeof window !== "undefined" && window.location.hash.startsWith("#sharez=")) {
       const loadZipShare = async () => {
         try {
           const hashRaw = window.location.hash.replace("#sharez=", "");
+
+          // Se l'ID è corto (< 20 caratteri), è memorizzato sul server!
+          if (hashRaw.length < 20) {
+            try {
+              const res = await fetch(`/api/shares/${hashRaw}`);
+              if (res.ok) {
+                const parsed = await res.json();
+                if (parsed && typeof parsed === "object" && (Array.isArray(parsed.plants) || parsed.plants)) {
+                  setState({
+                    plants: parsed.plants || [],
+                    activities: parsed.activities || [],
+                    smartTrackers: parsed.smartTrackers || [],
+                    settings: parsed.settings || { userName: "Ospite", gardenName: "Giardino Condiviso", offlineMode: false }
+                  });
+                  if (parsed.plants && parsed.plants.length > 0) {
+                    setSelectedPlantId(parsed.plants[0].id);
+                  }
+                  showToast("Serra condivisa caricata con successo! 🌿✨");
+                  return; // Risolto con successo, termina!
+                }
+              }
+            } catch (serverErr) {
+              console.warn("Nessun dato sul server, provo la decodifica locale:", serverErr);
+            }
+          }
+
+          // Fallback decodifica zip locale tradizionale
           // Decodifica la stringa URL-safe ripristinando i caratteri base64 standard (+ e /)
           let base64 = decodeURIComponent(hashRaw)
             .replace(/-/g, "+")
@@ -286,7 +313,7 @@ export default function App() {
           }
         } catch (e: any) {
           console.error("Errore decodifica link compresso:", e);
-          showToast("Errore durante il caricamento del link compresso.");
+          showToast("Errore durante il caricamento del link condensato.");
         }
       };
       loadZipShare();
@@ -1025,9 +1052,9 @@ export default function App() {
 
   // --- CONDIVISIONE LINK COPIA STATO ---
   const handleCopyShareLink = async () => {
-    showToast("Compressione intelligente dati e immagini... ⏳");
+    showToast("Salvataggio dati e ottimizzazione immagini in alta definizione... ⏳");
     try {
-      // Helper per rimpicciolire ed alleggerire le immagini Base64 (data:) di oltre il 98%
+      // Helper per ottimizzare ma MANTENERE splendide e definite le immagini Base64 (data:)
       const shrinkBase64 = (base64Str: string): Promise<string> => {
         return new Promise((resolve) => {
           if (!base64Str) {
@@ -1040,8 +1067,8 @@ export default function App() {
           }
           const img = new Image();
           img.onload = () => {
-            const maxWidth = 80; // Dimensione ottimale e super-leggera per avatar e icone
-            const maxHeight = 80;
+            const maxWidth = 800; // Risoluzione di alta qualità, perfettamente nitida e definita
+            const maxHeight = 800;
             let width = img.width;
             let height = img.height;
 
@@ -1063,8 +1090,8 @@ export default function App() {
             const ctx = canvas.getContext("2d");
             if (ctx) {
               ctx.drawImage(img, 0, 0, width, height);
-              // Qualità 0.25 ottiene immagini incredibilmente leggere ma perfettamente distinguibili
-              resolve(canvas.toDataURL("image/jpeg", 0.25));
+              // Qualità 0.82: ottiene immagini leggerissime ma nitidissime, degne di una rivista d'arte botanica
+              resolve(canvas.toDataURL("image/jpeg", 0.82));
             } else {
               resolve(base64Str);
             }
@@ -1072,23 +1099,23 @@ export default function App() {
           img.onerror = () => {
             resolve(base64Str);
           };
-          img.src = base64Str; // Carica l'immagine solo dopo aver impostato onload/onerror!
+          img.src = base64Str; // Avvia il caricamento
         });
       };
 
-      // Elabora asincronamente tutte le piante riducendo i pesi delle foto e preservandone tutti i campi nativi per non perdere informazioni
+      // Elabora asincronamente tutte le piante mantenendo l'eccezionale definizione delle foto
       const sanitizedPlants = await Promise.all(state.plants.map(async p => {
         const cleanImageUrl = p.imageUrl ? await shrinkBase64(p.imageUrl) : "";
-        // Conserviamo solo gli ultimi 3 diari per risparmiare moltissimo spazio
+        // Conserviamo fino agli ultimi 5 diari per una cronologia ricca
         const sortedDiary = p.diary ? [...p.diary].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()) : [];
-        const slicedDiary = sortedDiary.slice(0, 3);
+        const slicedDiary = sortedDiary.slice(0, 5);
         const cleanDiary = await Promise.all(slicedDiary.map(async d => ({
           id: d.id,
           eventTitle: d.eventTitle,
-          notes: d.notes ? d.notes.slice(0, 100) : "", // Limita lunghezza appunti diari condivisi
+          notes: d.notes || "",
           date: d.date,
           category: d.category || "generale",
-          imageUrl: d.imageUrl ? await shrinkBase64(d.imageUrl) : "" // Comprime anche la foto della nota di diario!
+          imageUrl: d.imageUrl ? await shrinkBase64(d.imageUrl) : "" // Anche le foto dei diari mantengono la qualità!
         })));
 
         return {
@@ -1106,21 +1133,12 @@ export default function App() {
           tags: p.tags || [],
           diary: cleanDiary,
           isDead: p.isDead ? true : undefined,
-          deathNotes: p.deathNotes ? p.deathNotes.slice(0, 100) : undefined,
+          deathNotes: p.deathNotes || undefined,
           deathDate: p.deathDate || undefined
         };
       }));
 
-      // Filtra le attività: tieni solo quelle attive (todo) e le ultime 3 completate (recenti)
-      const activeActivities = state.activities.filter(a => a.status === "todo");
-      const completedActivities = state.activities.filter(a => a.status === "completed")
-        .sort((a, b) => {
-          const tA = a.completedAt ? new Date(a.completedAt).getTime() : 0;
-          const tB = b.completedAt ? new Date(b.completedAt).getTime() : 0;
-          return tB - tA;
-        });
-      const recentCompleted = completedActivities.slice(0, 3);
-      const sanitizedActivities = [...activeActivities, ...recentCompleted].map(a => ({
+      const sanitizedActivities = state.activities.map(a => ({
         id: a.id,
         plantId: a.plantId,
         title: a.title,
@@ -1132,17 +1150,7 @@ export default function App() {
         completedNotes: a.completedNotes
       }));
 
-      // Filtra i tracciatori: solo attivi e 2 completati più di recente
-      const trackersList = state.smartTrackers || [];
-      const activeTrackers = trackersList.filter(t => !t.isCompleted);
-      const completedTrackers = trackersList.filter(t => t.isCompleted)
-        .sort((a, b) => {
-          const tA = a.completedAt ? new Date(a.completedAt).getTime() : 0;
-          const tB = b.completedAt ? new Date(b.completedAt).getTime() : 0;
-          return tB - tA;
-        });
-      const recentTrackers = completedTrackers.slice(0, 2);
-      const sanitizedTrackers = [...activeTrackers, ...recentTrackers].map(t => ({
+      const sanitizedTrackers = (state.smartTrackers || []).map(t => ({
         id: t.id,
         title: t.title,
         startDate: t.startDate,
@@ -1159,21 +1167,44 @@ export default function App() {
         settings: state.settings
       });
 
-      const zip = new JSZip();
-      zip.file("fb.json", stateString);
-      const base64Zip = await zip.generateAsync({
-        type: "base64",
-        compression: "DEFLATE",
-        compressionOptions: { level: 9 }
-      });
+      let shareUrl = "";
+      
+      // Tentativo principale: salvataggio sul server per un link ultracorto (ottimizzato e privo di limiti Vercel)
+      try {
+        const response = await fetch("/api/shares", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: stateString
+        });
+        if (response.ok) {
+          const resData = await response.json();
+          if (resData && resData.id) {
+            shareUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}#sharez=${resData.id}`;
+          }
+        }
+      } catch (err) {
+        console.warn("Server-side share non disponibile, procedo con compressione locale:", err);
+      }
 
-      // Rendi la stringa base64 sicura per l'URL per evitare caratteri speciali soggetti a traduzioni errate (+, /, =)
-      const urlSafeBase64 = base64Zip
-        .replace(/\+/g, "-")
-        .replace(/\//g, "_")
-        .replace(/=/g, "");
+      // Fallback: se il salvataggio su server fallisce per qualsiasi motivo, genera un link zip compresso URL-safe locale
+      if (!shareUrl) {
+        const zip = new JSZip();
+        zip.file("fb.json", stateString);
+        const base64Zip = await zip.generateAsync({
+          type: "base64",
+          compression: "DEFLATE",
+          compressionOptions: { level: 9 }
+        });
 
-      const shareUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}#sharez=${urlSafeBase64}`;
+        const urlSafeBase64 = base64Zip
+          .replace(/\+/g, "-")
+          .replace(/\//g, "_")
+          .replace(/=/g, "");
+
+        shareUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}#sharez=${urlSafeBase64}`;
+      }
       
       setGeneratedShareUrl(shareUrl);
       setIsShareOpen(true);
@@ -1183,7 +1214,7 @@ export default function App() {
         navigator.clipboard.writeText(shareUrl)
           .then(() => {
             setIsCopiedSuccess(true);
-            showToast("Link ultra-compresso (con foto) copiato! 🌿✨");
+            showToast("Link corto (con foto in alta definizione) copiato! 🌿✨");
           })
           .catch(() => {
             setIsCopiedSuccess(false);
@@ -1195,7 +1226,7 @@ export default function App() {
       }
     } catch (e) {
       console.error(e);
-      showToast("Errore durante la codifica del link compressa.");
+      showToast("Errore durante la codifica del link di condivisione.");
     }
   };
 
