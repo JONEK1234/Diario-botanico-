@@ -1084,6 +1084,18 @@ export default function App() {
   // --- CONDIVISIONE LINK COPIA STATO ---
   const handleCopyShareLink = async () => {
     showToast("Salvataggio dati e ottimizzazione immagini in alta definizione... ⏳");
+
+    // Calcola il dominio corretto: se siamo in locale usiamo localhost, altrimenti puntiamo sempre a Google AI Studio
+    const getCanonicalShareBaseUrl = (): string => {
+      if (typeof window === "undefined") return "";
+      const host = window.location.hostname;
+      if (host === "localhost" || host === "127.0.0.1" || host.startsWith("192.168.")) {
+        const path = window.location.pathname.endsWith("/") ? window.location.pathname : window.location.pathname + "/";
+        return `${window.location.protocol}//${window.location.host}${path}`;
+      }
+      return "https://ais-pre-sx4htuchmf4s4oselbkdae-210149562905.europe-west2.run.app/";
+    };
+
     try {
       // Helper per ottimizzare ma MANTENERE splendide e definite le immagini Base64 (data:)
       const shrinkBase64 = (base64Str: string): Promise<string> => {
@@ -1212,7 +1224,7 @@ export default function App() {
         if (response.ok) {
           const resData = await response.json();
           if (resData && resData.id) {
-            shareUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}#sharez=${resData.id}`;
+            shareUrl = `${getCanonicalShareBaseUrl()}#sharez=${resData.id}`;
           }
         }
       } catch (err) {
@@ -1234,7 +1246,7 @@ export default function App() {
           });
           
           if (docRef.id) {
-            shareUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}#sharez=${docRef.id}`;
+            shareUrl = `${getCanonicalShareBaseUrl()}#sharez=${docRef.id}`;
           }
         } catch (firestoreErr) {
           console.error("Errore salvataggio diretto su Firestore:", firestoreErr);
@@ -1254,7 +1266,7 @@ export default function App() {
                 body: stateString
               });
               if (saveRes.ok) {
-                shareUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}#sharez=${bucketId}`;
+                shareUrl = `${getCanonicalShareBaseUrl()}#sharez=${bucketId}`;
               }
             }
           }
@@ -1278,7 +1290,7 @@ export default function App() {
           .replace(/\//g, "_")
           .replace(/=/g, "");
 
-        shareUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}#sharez=${urlSafeBase64}`;
+        shareUrl = `${getCanonicalShareBaseUrl()}#sharez=${urlSafeBase64}`;
       }
       
       setGeneratedShareUrl(shareUrl);
