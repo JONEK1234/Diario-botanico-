@@ -256,7 +256,7 @@ export default function App() {
         try {
           const hashRaw = window.location.hash.replace("#sharez=", "");
 
-          // Se l'ID è corto (< 50 caratteri), è memorizzato sul server o sul cloud KV!
+          // Se l'ID è corto (< 50 caratteri), è memorizzato sul server, su Firestore o sul cloud KV!
           if (hashRaw.length < 50) {
             let parsedData = null;
             
@@ -267,10 +267,25 @@ export default function App() {
                 parsedData = await res.json();
               }
             } catch (serverErr) {
-              console.warn("Nessun dato sul Express server, provo la lettura diretta dal cloud:", serverErr);
+              console.warn("Nessun dato sul Express server, provo la lettura diretta da Firestore:", serverErr);
             }
 
-            // Tentativo 2: Lettura diretta dal cloud KVDB (per static hosting e Vercel)
+            // Tentativo 2: Lettura diretta da Google Firebase Firestore (perfetto per Vercel serverless/statico)
+            if (!parsedData) {
+              try {
+                const { doc, getDoc } = await import("firebase/firestore");
+                const { db } = await import("./firebase");
+                const docRef = doc(db, "shares", hashRaw);
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                  parsedData = docSnap.data();
+                }
+              } catch (firestoreErr) {
+                console.warn("Nessun dato su Firestore, procedo col cloud KV:", firestoreErr);
+              }
+            }
+
+            // Tentativo 3: Lettura diretta dal cloud KVDB (per static hosting e Vercel)
             if (!parsedData) {
               try {
                 const cloudRes = await fetch(`https://kvdb.io/${hashRaw}/state`);
@@ -1201,10 +1216,32 @@ export default function App() {
           }
         }
       } catch (err) {
-        console.warn("Server-side share non disponibile, provo a salvare direttamente sul cloud KV:", err);
+        console.warn("Server-side share non disponibile, provo a salvare direttamente da client su Firestore:", err);
       }
 
-      // Tentativo 2: Se il server non risponde o dà errore (ad es. per static hosting su Vercel), salviamo direttamente su KVDB cloud da client
+      // Tentativo 2: Salvataggio diretto nel nostro database cloud Firebase Firestore (perfetto e stabilissimo per Vercel!)
+      if (!shareUrl) {
+        try {
+          const { collection, addDoc } = await import("firebase/firestore");
+          const { db } = await import("./firebase");
+          
+          const docRef = await addDoc(collection(db, "shares"), {
+            plants: sanitizedPlants,
+            activities: sanitizedActivities,
+            smartTrackers: sanitizedTrackers,
+            settings: state.settings,
+            createdAt: new Date().toISOString()
+          });
+          
+          if (docRef.id) {
+            shareUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}#sharez=${docRef.id}`;
+          }
+        } catch (firestoreErr) {
+          console.error("Errore salvataggio diretto su Firestore:", firestoreErr);
+        }
+      }
+
+      // Tentativo 3: Se Firestore e il server falliscono, salviamo direttamente su KVDB cloud da client
       if (!shareUrl) {
         try {
           const bucketRes = await fetch("https://kvdb.io", { method: "POST" });
