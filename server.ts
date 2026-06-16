@@ -40,6 +40,17 @@ async function startServer() {
 
   app.use(express.json({ limit: '10mb' }));
 
+  // Middleware CORS per consentire l'accesso sicuro sia da Google AI Studio che da istanze Vercel
+  app.use((req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, PATCH, DELETE");
+    res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(200);
+    }
+    next();
+  });
+
   const SHARES_DIR = path.join(process.cwd(), "shares");
   if (!fs.existsSync(SHARES_DIR)) {
     fs.mkdirSync(SHARES_DIR, { recursive: true });

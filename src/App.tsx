@@ -43,6 +43,16 @@ import { JournalState, Plant, CareActivity, PlantStatus, PlantOrigin, DiaryEntry
 import { PRESET_PLANTS, PRESET_ACTIVITIES } from "./data/presetPlants";
 import JSZip from "jszip";
 
+const getApiUrl = (endpoint: string): string => {
+  if (typeof window === "undefined") return endpoint;
+  const host = window.location.hostname;
+  if (host === "localhost" || host === "127.0.0.1" || host.startsWith("192.168.")) {
+    return endpoint;
+  }
+  const baseUrl = "https://ais-pre-sx4htuchmf4s4oselbkdae-210149562905.europe-west2.run.app";
+  return `${baseUrl}${endpoint.startsWith("/") ? "" : "/"}${endpoint}`;
+};
+
 export default function App() {
   // 1. CARICAMENTO STATO INIZIALE (Supporto Standalone Offline ed State Management locale)
   const getInitialState = (): JournalState => {
@@ -262,7 +272,7 @@ export default function App() {
             
             // Tentativo 1: Chiediamo al nostro server Express proxy
             try {
-              const res = await fetch(`/api/shares/${hashRaw}`);
+              const res = await fetch(getApiUrl(`/api/shares/${hashRaw}`));
               if (res.ok) {
                 parsedData = await res.json();
               }
@@ -932,7 +942,7 @@ export default function App() {
       const recentLogs = selectedPlant.diary.slice(0, 3).map(d => `[${d.date.split("T")[0]}] ${d.eventTitle}: ${d.notes}`).join("\n");
       const activeActs = state.activities.filter(a => a.plantId === selectedPlant.id && a.status === "todo").map(a => a.title).join(", ");
 
-      const response = await fetch("/api/gemini/curator", {
+      const response = await fetch(getApiUrl("/api/gemini/curator"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1015,7 +1025,7 @@ export default function App() {
   const handleDownloadApp = async (format: "html" | "zip") => {
     showToast("Preparazione ed esportazione della tua serra digitale in corso...");
     try {
-      const response = await fetch(`/api/download-app?type=${format}`, {
+      const response = await fetch(getApiUrl(`/api/download-app?type=${format}`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(state)
@@ -1214,7 +1224,7 @@ export default function App() {
       
       // Tentativo principale: salvataggio sul server per un link ultracorto (ottimizzato e privo di limiti Vercel)
       try {
-        const response = await fetch("/api/shares", {
+        const response = await fetch(getApiUrl("/api/shares"), {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
