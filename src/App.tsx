@@ -1856,9 +1856,9 @@ export default function App() {
                       {selectedPlant.isDead && (
                         <div className="my-3 p-3 bg-stone-100 border border-stone-200 rounded-2xl flex items-start gap-2.5 text-stone-700">
                           <Skull className="w-4 h-4 text-stone-500 mt-0.5 shrink-0" />
-                          <div className="text-[11px] leading-relaxed font-sans">
+                          <div className="text-[11px] leading-relaxed font-sans w-full">
                             <p className="font-bold font-mono text-[9px] uppercase text-stone-500">Memoriale Botanico • Passata il {selectedPlant.deathDate ? new Date(selectedPlant.deathDate).toLocaleDateString("it-IT") : ""}</p>
-                            <p className="italic mt-0.5 text-stone-600">"{selectedPlant.deathNotes || "La pianta è conservata con affetto nel nostro ricordo."}"</p>
+                            <p className="italic mt-0.5 text-stone-600 whitespace-pre-wrap">"{selectedPlant.deathNotes || "La pianta è conservata con affetto nel nostro ricordo."}"</p>
                           </div>
                         </div>
                       )}
@@ -1870,7 +1870,7 @@ export default function App() {
                         </span>
                       </div>
 
-                      <p className="text-xs text-sage-650 leading-relaxed mt-4 font-normal">
+                      <p className="text-xs text-sage-650 leading-relaxed mt-4 font-normal whitespace-pre-wrap">
                         {selectedPlant.description}
                       </p>
 
@@ -2043,7 +2043,7 @@ export default function App() {
                         </div>
 
                         <h4 className="font-serif italic font-bold text-[#2d3a27] mt-1.5 text-[14px]">{entry.eventTitle}</h4>
-                        <p className="text-xs text-sage-600 mt-1 leading-relaxed font-sans">{entry.notes}</p>
+                        <p className="text-xs text-sage-600 mt-1 leading-relaxed font-sans whitespace-pre-wrap">{entry.notes}</p>
 
                         {entry.imageUrl && (
                           <div className="mt-3 overflow-hidden rounded-xl border border-[#e2e2d8] max-w-[200px] cursor-zoom-in" onClick={() => setFullscreenImageUrl(entry.imageUrl)} title="Clicca per ingrandire">
@@ -2240,7 +2240,7 @@ export default function App() {
                     </button>
                   </div>
                   <p className="text-[9px] text-[#8e9299] font-mono">Chiusa il {a.completedAt ? new Date(a.completedAt).toLocaleDateString("it-IT") : ""}</p>
-                  {a.completedNotes && <p className="italic font-serif">« {a.completedNotes} »</p>}
+                  {a.completedNotes && <p className="italic font-serif whitespace-pre-wrap">« {a.completedNotes} »</p>}
                 </div>
               ))}
             </div>
@@ -3543,7 +3543,7 @@ export default function App() {
                                   {t.title}
                                 </h4>
                                 {t.notes && (
-                                  <p className="text-[10px] text-stone-500 leading-normal line-clamp-2 mt-1">
+                                  <p className="text-[10px] text-stone-500 leading-normal line-clamp-2 mt-1 whitespace-pre-wrap">
                                     "{t.notes}"
                                   </p>
                                 )}
@@ -3744,7 +3744,7 @@ export default function App() {
                             <div key={t.id} className="bg-[#fafaf5] p-3 rounded-2xl border border-stone-150 flex items-start justify-between gap-3">
                               <div className="space-y-1">
                                 <p className="font-bold text-[#2d3a27] font-serif italic text-sm">{t.title}</p>
-                                {t.notes && <p className="text-[10px] text-stone-500 italic">"{t.notes}"</p>}
+                                {t.notes && <p className="text-[10px] text-stone-500 italic whitespace-pre-wrap">"{t.notes}"</p>}
                                 <div className="text-[9px] font-mono text-stone-400 flex items-center gap-2 flex-wrap pt-1">
                                   <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-md font-bold">Inizio: {t.startDate}</span>
                                   <span className="bg-stone-100 text-stone-600 px-1.5 py-0.5 rounded-md font-bold">Ultimato il: {t.completedAt ? new Date(t.completedAt).toLocaleDateString("it-IT") : targetDate}</span>
