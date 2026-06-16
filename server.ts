@@ -45,49 +45,94 @@ async function startServer() {
     fs.mkdirSync(SHARES_DIR, { recursive: true });
   }
 
-  // API: Salva una condivisione sul server generandone un ID corto
-  app.post("/api/shares", (req, res) => {
+  // API: Salva una condivisione sul server / cloud
+  app.post("/api/shares", async (req, res) => {
     try {
       const stateData = req.body;
       if (!stateData) {
         return res.status(400).json({ error: "Dati non validi" });
       }
 
-      // Genera un ID corto casuale di 8 caratteri alfanumerici
-      const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
       let shareId = "";
-      for (let i = 0; i < 8; i++) {
-        shareId += chars.charAt(Math.floor(Math.random() * chars.length));
+
+      // Tentativo 1: Salva nel cloud persistente e veloce di KVDB.io per supportare Vercel
+      try {
+        const bucketRes = await fetch("https://kvdb.io", { method: "POST" });
+        if (bucketRes.ok) {
+          const bucketId = (await bucketRes.text()).trim();
+          if (bucketId && bucketId.length > 5) {
+            const saveRes = await fetch(`https://kvdb.io/${bucketId}/state`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(stateData)
+            });
+            if (saveRes.ok) {
+              shareId = bucketId;
+            }
+          }
+        }
+      } catch (cloudErr) {
+        console.warn("Errore KVDB cloud, fallback su filesystem locale:", cloudErr);
       }
 
-      const filePath = path.join(SHARES_DIR, `${shareId}.json`);
-      fs.writeFileSync(filePath, JSON.stringify(stateData, null, 2), "utf-8");
+      // Fallback: Salva sul disco locale se il cloud non è disponibile
+      if (!shareId) {
+        const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        for (let i = 0; i < 8; i++) {
+          shareId += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        const filePath = path.join(SHARES_DIR, `${shareId}.json`);
+        fs.writeFileSync(filePath, JSON.stringify(stateData, null, 2), "utf-8");
+      }
 
       res.json({ id: shareId });
     } catch (error: any) {
       console.error("Errore salvataggio condivisione:", error);
-      res.status(500).json({ error: "Errore durante il salvataggio sul server: " + error.message });
+      res.status(500).json({ error: "Errore durante il salvataggio: " + error.message });
     }
   });
 
   // API: Recupera una condivisione tramite ID corto
-  app.get("/api/shares/:id", (req, res) => {
+  app.get("/api/shares/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      if (!/^[a-zA-Z0-9]+$/.test(id)) {
+      if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
         return res.status(400).json({ error: "ID non valido" });
       }
 
-      const filePath = path.join(SHARES_DIR, `${id}.json`);
-      if (!fs.existsSync(filePath)) {
-        return res.status(404).json({ error: "Condivisione non trovata" });
+      // Se l'ID è lungo (~20 caratteri), proviamo KVDB cloud
+      if (id.length > 15) {
+        try {
+          const cloudRes = await fetch(`https://kvdb.io/${id}/state`);
+          if (cloudRes.ok) {
+            const data = await cloudRes.json();
+            return res.json(data);
+          }
+        } catch (cloudErr) {
+          console.warn("Errore lettura KVDB cloud:", cloudErr);
+        }
       }
 
-      const data = fs.readFileSync(filePath, "utf-8");
-      res.json(JSON.parse(data));
+      // Fallback o ID corto locale: Leggi dal filesystem locale
+      const filePath = path.join(SHARES_DIR, `${id}.json`);
+      if (fs.existsSync(filePath)) {
+        const data = fs.readFileSync(filePath, "utf-8");
+        return res.json(JSON.parse(data));
+      }
+
+      // Se non trovato localmente ed era corto, proviamo comunque KVDB per sicurezza
+      try {
+        const cloudRes = await fetch(`https://kvdb.io/${id}/state`);
+        if (cloudRes.ok) {
+          const data = await cloudRes.json();
+          return res.json(data);
+        }
+      } catch (e) {}
+
+      res.status(404).json({ error: "Condivisione non trovata" });
     } catch (error: any) {
       console.error("Errore lettura condivisione:", error);
-      res.status(500).json({ error: "Errore durante il recupero dei dati dal server: " + error.message });
+      res.status(500).json({ error: "Errore durante il recupero dei dati: " + error.message });
     }
   });
 

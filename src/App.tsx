@@ -256,28 +256,44 @@ export default function App() {
         try {
           const hashRaw = window.location.hash.replace("#sharez=", "");
 
-          // Se l'ID è corto (< 20 caratteri), è memorizzato sul server!
-          if (hashRaw.length < 20) {
+          // Se l'ID è corto (< 50 caratteri), è memorizzato sul server o sul cloud KV!
+          if (hashRaw.length < 50) {
+            let parsedData = null;
+            
+            // Tentativo 1: Chiediamo al nostro server Express proxy
             try {
               const res = await fetch(`/api/shares/${hashRaw}`);
               if (res.ok) {
-                const parsed = await res.json();
-                if (parsed && typeof parsed === "object" && (Array.isArray(parsed.plants) || parsed.plants)) {
-                  setState({
-                    plants: parsed.plants || [],
-                    activities: parsed.activities || [],
-                    smartTrackers: parsed.smartTrackers || [],
-                    settings: parsed.settings || { userName: "Ospite", gardenName: "Giardino Condiviso", offlineMode: false }
-                  });
-                  if (parsed.plants && parsed.plants.length > 0) {
-                    setSelectedPlantId(parsed.plants[0].id);
-                  }
-                  showToast("Serra condivisa caricata con successo! 🌿✨");
-                  return; // Risolto con successo, termina!
-                }
+                parsedData = await res.json();
               }
             } catch (serverErr) {
-              console.warn("Nessun dato sul server, provo la decodifica locale:", serverErr);
+              console.warn("Nessun dato sul Express server, provo la lettura diretta dal cloud:", serverErr);
+            }
+
+            // Tentativo 2: Lettura diretta dal cloud KVDB (per static hosting e Vercel)
+            if (!parsedData) {
+              try {
+                const cloudRes = await fetch(`https://kvdb.io/${hashRaw}/state`);
+                if (cloudRes.ok) {
+                  parsedData = await cloudRes.json();
+                }
+              } catch (cloudErr) {
+                console.error("Errore lettura diretta KVDB cloud:", cloudErr);
+              }
+            }
+
+            if (parsedData && typeof parsedData === "object" && (Array.isArray(parsedData.plants) || parsedData.plants)) {
+              setState({
+                plants: parsedData.plants || [],
+                activities: parsedData.activities || [],
+                smartTrackers: parsedData.smartTrackers || [],
+                settings: parsedData.settings || { userName: "Ospite", gardenName: "Giardino Condiviso", offlineMode: false }
+              });
+              if (parsedData.plants && parsedData.plants.length > 0) {
+                setSelectedPlantId(parsedData.plants[0].id);
+              }
+              showToast("Serra condivisa caricata con successo! 🌿✨");
+              return; // Risolto con successo, termina!
             }
           }
 
@@ -1185,10 +1201,32 @@ export default function App() {
           }
         }
       } catch (err) {
-        console.warn("Server-side share non disponibile, procedo con compressione locale:", err);
+        console.warn("Server-side share non disponibile, provo a salvare direttamente sul cloud KV:", err);
       }
 
-      // Fallback: se il salvataggio su server fallisce per qualsiasi motivo, genera un link zip compresso URL-safe locale
+      // Tentativo 2: Se il server non risponde o dà errore (ad es. per static hosting su Vercel), salviamo direttamente su KVDB cloud da client
+      if (!shareUrl) {
+        try {
+          const bucketRes = await fetch("https://kvdb.io", { method: "POST" });
+          if (bucketRes.ok) {
+            const bucketId = (await bucketRes.text()).trim();
+            if (bucketId && bucketId.length > 5) {
+              const saveRes = await fetch(`https://kvdb.io/${bucketId}/state`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: stateString
+              });
+              if (saveRes.ok) {
+                shareUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}#sharez=${bucketId}`;
+              }
+            }
+          }
+        } catch (kvErr) {
+          console.error("Errore salvataggio diretto su KVDB cloud:", kvErr);
+        }
+      }
+
+      // Fallback Estremo: se anche il cloud fallisce, genera un link zip compresso URL-safe locale
       if (!shareUrl) {
         const zip = new JSZip();
         zip.file("fb.json", stateString);
