@@ -10,7 +10,7 @@ service cloud.firestore {
     }
     
     function isValidShare(data) {
-      return data.keys().hasAll(['plants']) && data.plants is list && data.plants.size() <= 100;
+      return data.plants is list && data.plants.size() <= 120;
     }
     
     match /shares/{shareId} {

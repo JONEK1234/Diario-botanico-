@@ -1095,15 +1095,11 @@ export default function App() {
   const handleCopyShareLink = async () => {
     showToast("Salvataggio dati e ottimizzazione immagini in alta definizione... ⏳");
 
-    // Calcola il dominio corretto: se siamo in locale usiamo localhost, altrimenti puntiamo sempre a Google AI Studio
+    // Calcola il dominio corretto in modo dinamico per supportare perfettamente Vercel, localhost e Google AI Studio
     const getCanonicalShareBaseUrl = (): string => {
       if (typeof window === "undefined") return "";
-      const host = window.location.hostname;
-      if (host === "localhost" || host === "127.0.0.1" || host.startsWith("192.168.")) {
-        const path = window.location.pathname.endsWith("/") ? window.location.pathname : window.location.pathname + "/";
-        return `${window.location.protocol}//${window.location.host}${path}`;
-      }
-      return "https://ais-pre-sx4htuchmf4s4oselbkdae-210149562905.europe-west2.run.app/";
+      const path = window.location.pathname.endsWith("/") ? window.location.pathname : window.location.pathname + "/";
+      return `${window.location.protocol}//${window.location.host}${path}`;
     };
 
     try {
@@ -1247,13 +1243,10 @@ export default function App() {
           const { collection, addDoc } = await import("firebase/firestore");
           const { db } = await import("./firebase");
           
-          const docRef = await addDoc(collection(db, "shares"), {
-            plants: sanitizedPlants,
-            activities: sanitizedActivities,
-            smartTrackers: sanitizedTrackers,
-            settings: state.settings,
-            createdAt: new Date().toISOString()
-          });
+          const firestorePayload = JSON.parse(stateString);
+          firestorePayload.createdAt = new Date().toISOString();
+          
+          const docRef = await addDoc(collection(db, "shares"), firestorePayload);
           
           if (docRef.id) {
             shareUrl = `${getCanonicalShareBaseUrl()}#sharez=${docRef.id}`;
