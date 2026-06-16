@@ -150,6 +150,7 @@ export default function App() {
 
   // Stati per Piante Morte e Memoriale
   const [isDeathModalOpen, setIsDeathModalOpen] = useState(false);
+  const [fullscreenImageUrl, setFullscreenImageUrl] = useState<string | null>(null);
   const [plantIdToDeclareDead, setPlantIdToDeclareDead] = useState<string | null>(null);
   const [deathNotesInput, setDeathNotesInput] = useState("");
   const [isMemorialOpen, setIsMemorialOpen] = useState(false);
@@ -1016,31 +1017,88 @@ export default function App() {
 
   // --- CONDIVISIONE LINK COPIA STATO ---
   const handleCopyShareLink = async () => {
-    showToast("Generazione link compresso... ⏳");
+    showToast("Generazione link compresso ultra-leggero... ⏳");
     try {
-      // Per mantenere il link super leggero e corto, rimuoviamo le immagini pesanti in Base64
+      // Per mantenere il link super leggero e corto, rimuoviamo le immagini pesanti in Base64 e limitiamo lo storico superfluo
       const sanitizedPlants = state.plants.map(p => {
         const cleanImageUrl = p.imageUrl && p.imageUrl.startsWith("data:") ? "" : p.imageUrl;
-        const cleanDiary = p.diary ? p.diary.map(d => ({
-          ...d,
-          imageUrl: d.imageUrl && d.imageUrl.startsWith("data:") ? "" : d.imageUrl
-        })) : [];
+        // Conserviamo solo gli ultimi 5 diari per risparmiare moltissimo spazio
+        const sortedDiary = p.diary ? [...p.diary].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()) : [];
+        const slicedDiary = sortedDiary.slice(0, 5);
+        const cleanDiary = slicedDiary.map(d => ({
+          id: d.id,
+          eventTitle: d.eventTitle,
+          notes: d.notes ? d.notes.slice(0, 300) : "", // Limita lunghezza appunti diari condivisi
+          date: d.date,
+          activityType: d.activityType
+        }));
 
         return {
-          ...p,
+          id: p.id,
+          name: p.name,
+          nickname: p.nickname,
+          species: p.species,
+          status: p.status,
+          origin: p.origin,
+          createdAt: p.createdAt,
+          isDead: p.isDead,
+          deathNotes: p.deathNotes ? p.deathNotes.slice(0, 300) : "",
+          deathDate: p.deathDate,
           imageUrl: cleanImageUrl,
           diary: cleanDiary
         };
       });
 
+      // Filtra le attività: tieni solo quelle attive (todo) e le ultime 5 completate (recenti)
+      const activeActivities = state.activities.filter(a => a.status === "todo");
+      const completedActivities = state.activities.filter(a => a.status === "completed")
+        .sort((a, b) => {
+          const tA = a.completedAt ? new Date(a.completedAt).getTime() : 0;
+          const tB = b.completedAt ? new Date(b.completedAt).getTime() : 0;
+          return tB - tA;
+        });
+      const recentCompleted = completedActivities.slice(0, 5);
+      const sanitizedActivities = [...activeActivities, ...recentCompleted].map(a => ({
+        id: a.id,
+        plantId: a.plantId,
+        title: a.title,
+        status: a.status,
+        type: a.type,
+        dueDate: a.dueDate,
+        priority: a.priority,
+        completedAt: a.completedAt,
+        completedNotes: a.completedNotes
+      }));
+
+      // Filtra i tracciatori: solo attivi e i 3 completati più di recente
+      const trackersList = state.smartTrackers || [];
+      const activeTrackers = trackersList.filter(t => !t.isCompleted);
+      const completedTrackers = trackersList.filter(t => t.isCompleted)
+        .sort((a, b) => {
+          const tA = a.completedAt ? new Date(a.completedAt).getTime() : 0;
+          const tB = b.completedAt ? new Date(b.completedAt).getTime() : 0;
+          return tB - tA;
+        });
+      const recentTrackers = completedTrackers.slice(0, 3);
+      const sanitizedTrackers = [...activeTrackers, ...recentTrackers].map(t => ({
+        id: t.id,
+        title: t.title,
+        startDate: t.startDate,
+        durationDays: t.durationDays,
+        isCompleted: t.isCompleted,
+        completedAt: t.completedAt,
+        notes: t.notes
+      }));
+
       const stateString = JSON.stringify({
         plants: sanitizedPlants,
-        activities: state.activities,
+        activities: sanitizedActivities,
+        smartTrackers: sanitizedTrackers,
         settings: state.settings
       });
 
       const zip = new JSZip();
-      zip.file("flora_backup.json", stateString);
+      zip.file("fb.json", stateString);
       const base64Zip = await zip.generateAsync({
         type: "base64",
         compression: "DEFLATE",
@@ -1056,7 +1114,7 @@ export default function App() {
         navigator.clipboard.writeText(shareUrl)
           .then(() => {
             setIsCopiedSuccess(true);
-            showToast("Link compresso generato e copiato negli appunti! 🌿✨");
+            showToast("Link ultra-compresso copiato in memoria! 🌿✨");
           })
           .catch(() => {
             setIsCopiedSuccess(false);
@@ -1068,7 +1126,7 @@ export default function App() {
       }
     } catch (e) {
       console.error(e);
-      showToast("Errore durante la codifica compressa del link.");
+      showToast("Errore durante la codifica del link compressa.");
     }
   };
 
@@ -1240,13 +1298,16 @@ export default function App() {
           </div>
         </div>
 
-        <div className="bento-card p-4 flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-[#e9e9df] text-[#7e8c69] flex items-center justify-center">
-            <Check className="w-4.5 h-4.5 text-sage-800" />
+        <div 
+          onClick={() => setIsHistoryOpen(true)}
+          className="bento-card p-4 flex items-center gap-3 cursor-pointer bg-gradient-to-tr from-[#fbfafa] to-[#f4f2ef] hover:to-[#ebe8e4] hover:shadow-xs border border-stone-200 hover:border-stone-400 group transition-all"
+        >
+          <div className="p-2.5 rounded-xl bg-[#e9e9df] text-[#7e8c69] flex items-center justify-center transition-all group-hover:bg-emerald-50 group-hover:text-emerald-800">
+            <Check className="w-4.5 h-4.5 text-sage-800 group-hover:text-emerald-750 transition-colors" />
           </div>
           <div>
-            <p className="text-[9px] font-mono uppercase tracking-wider text-[#8e9299]">Storico Cure</p>
-            <div className="text-base font-serif italic font-bold text-sage-800">
+            <p className="text-[9px] font-mono uppercase tracking-wider text-stone-500">Storico Cure</p>
+            <div className="text-base font-serif italic font-bold text-sage-800 group-hover:text-emerald-800 transition-colors">
               {state.activities.filter(a => a.status === "completed").length} concluse
             </div>
           </div>
@@ -1427,8 +1488,8 @@ export default function App() {
               <div className="bento-card overflow-hidden bg-white">
                 <div className="flex flex-col md:flex-row">
                   {/* Image Grid Frame resembling garden bento item */}
-                  <div className="md:w-5/12 h-64 md:h-auto overflow-hidden relative min-h-[280px] bg-sage-50 border-r border-[#e2e2d8]">
-                    <img src={selectedPlant.imageUrl} alt={selectedPlant.name} className="w-full h-full object-cover transition-transform duration-700 hover:scale-102" />
+                  <div className="md:w-5/12 h-64 md:h-auto overflow-hidden relative min-h-[280px] bg-sage-50 border-r border-[#e2e2d8] cursor-zoom-in" onClick={() => setFullscreenImageUrl(selectedPlant.imageUrl)} title="Clicca per visualizzare a schermo intero">
+                    <img src={selectedPlant.imageUrl} alt={selectedPlant.name} className="w-full h-full object-cover transition-transform duration-700 hover:scale-105" />
                     <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/50 via-transparent to-transparent md:hidden p-4">
                       <span className="text-[9px] uppercase font-mono tracking-widest bg-[#2d3a27] p-1 px-2.5 rounded-full text-white">
                         {selectedPlant.status}
@@ -1667,8 +1728,8 @@ export default function App() {
                         <p className="text-xs text-sage-600 mt-1 leading-relaxed font-sans">{entry.notes}</p>
 
                         {entry.imageUrl && (
-                          <div className="mt-3 overflow-hidden rounded-xl border border-[#e2e2d8] max-w-[200px]">
-                            <img src={entry.imageUrl} alt={entry.eventTitle} className="w-full h-auto object-cover max-h-32" />
+                          <div className="mt-3 overflow-hidden rounded-xl border border-[#e2e2d8] max-w-[200px] cursor-zoom-in" onClick={() => setFullscreenImageUrl(entry.imageUrl)} title="Clicca per ingrandire">
+                            <img src={entry.imageUrl} alt={entry.eventTitle} className="w-full h-auto object-cover max-h-32 transition duration-300 hover:scale-105" />
                           </div>
                         )}
                       </motion.div>
@@ -2758,11 +2819,11 @@ export default function App() {
                       >
                         <div className="space-y-4">
                           {/* Grayscale image option */}
-                          <div className="w-full h-44 rounded-2xl overflow-hidden bg-stone-150 border border-stone-200 relative">
+                          <div className="w-full h-44 rounded-2xl overflow-hidden bg-stone-150 border border-stone-200 relative cursor-zoom-in" onClick={() => setFullscreenImageUrl(p.imageUrl)} title="Clicca per ingrandire">
                             <img 
                               src={p.imageUrl} 
                               alt={p.name} 
-                              className="w-full h-full object-cover grayscale contrast-[1.08] blur-[0.3px] group-hover:grayscale-0 hover:scale-105 transition-all duration-300"
+                              className="w-full h-full object-cover grayscale contrast-[1.08] blur-[0.3px] group-hover:grayscale-0 hover:scale-[1.06] transition-all duration-300"
                             />
                             <div className="absolute top-3 left-3 bg-[#fbfafa]/90 backdrop-blur-xs text-[9px] font-mono font-bold uppercase p-1 px-2.5 rounded-full text-stone-700 shadow-2xs border border-stone-200">
                               {p.species}
@@ -3279,145 +3340,174 @@ export default function App() {
                   </div>
                 )}
               </AnimatePresence>
-
-              {/* Modale interno dello Storico per l'Agenda */}
-              <AnimatePresence>
-                {isHistoryOpen && (
-                  <div className="fixed inset-0 bg-black/50 backdrop-blur-md flex items-center justify-center p-4 z-55">
-                    <motion.div
-                      initial={{ scale: 0.95, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      exit={{ scale: 0.95, opacity: 0 }}
-                      className="bg-white rounded-3xl border border-[#e4e8e1] p-6 max-w-2xl w-full max-h-[85vh] flex flex-col space-y-4 font-sans shadow-2xl"
-                    >
-                      <div className="flex justify-between items-center pb-2 border-b border-[#e4e8e1]">
-                        <div className="flex items-center gap-2">
-                          <div className="p-1.5 bg-emerald-50 text-emerald-800 rounded-xl">
-                            <History className="w-5 h-5 animate-pulse" />
-                          </div>
-                          <div>
-                            <h3 className="font-serif font-bold text-[#2d3a27] text-base md:text-lg">
-                              Storico delle Attività e Tracciatori
-                            </h3>
-                            <p className="text-[10px] font-mono text-stone-400 uppercase tracking-widest">Archivio completo e permanente delle voci concluse</p>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setIsHistoryOpen(false)}
-                          className="p-1.5 hover:bg-[#e7ece5] rounded-xl text-stone-550 cursor-pointer"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-
-                      {/* Contenitore con scorrimento */}
-                      <div className="flex-1 overflow-y-auto space-y-6 pr-1 text-xs">
-                        
-                        {/* Sezione 1: Tracciatori di Ciclo Conclusi */}
-                        <div className="space-y-3">
-                          <h4 className="font-serif font-semibold text-emerald-850 text-sm border-b border-stone-100 pb-1 flex justify-between items-center">
-                            <span>Tracciatori di Ciclo Completati</span>
-                            <span className="font-mono text-[9px] bg-stone-100 text-[#4c5938] px-2 py-0.5 rounded-md font-bold">
-                              {trackersList.filter(t => t.isCompleted).length} in archivio
-                            </span>
-                          </h4>
-
-                          {trackersList.filter(t => t.isCompleted).length === 0 ? (
-                            <p className="text-center italic text-stone-400 py-4 font-sans">Nessun tracciatore completato in archivio.</p>
-                          ) : (
-                            <div className="space-y-2">
-                              {trackersList.filter(t => t.isCompleted).map(t => {
-                                const targetDate = calculateTargetDate(t.startDate, t.durationDays);
-                                return (
-                                  <div key={t.id} className="bg-[#fafaf5] p-3 rounded-2xl border border-stone-150 flex items-start justify-between gap-3">
-                                    <div className="space-y-1">
-                                      <p className="font-bold text-[#2d3a27] font-serif italic text-sm">{t.title}</p>
-                                      {t.notes && <p className="text-[10px] text-stone-500 italic">"{t.notes}"</p>}
-                                      <div className="text-[9px] font-mono text-stone-400 flex items-center gap-2 flex-wrap pt-1">
-                                        <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-md font-bold">Inizio: {t.startDate}</span>
-                                        <span className="bg-stone-100 text-stone-600 px-1.5 py-0.5 rounded-md font-bold">Ultimato il: {t.completedAt ? new Date(t.completedAt).toLocaleDateString("it-IT") : targetDate}</span>
-                                      </div>
-                                    </div>
-                                    {!isReadOnlyMode ? (
-                                      <button
-                                        onClick={() => handleDeleteTracker(t.id)}
-                                        className="p-1 hover:bg-red-50 text-stone-400 hover:text-red-600 rounded-lg cursor-pointer transition-colors mt-0.5 flex-shrink-0"
-                                        title="Elimina definitivamente"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    ) : (
-                                      <span className="text-[8px] font-mono text-stone-400 uppercase self-start bg-stone-100 p-1 rounded-md">Solo Lettura</span>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Sezione 2: Faccende & Attività Chiuse */}
-                        <div className="space-y-3">
-                          <h4 className="font-serif font-semibold text-emerald-850 text-sm border-b border-stone-100 pb-1 flex justify-between items-center">
-                            <span>Faccende Generali Chiuse</span>
-                            <span className="font-mono text-[9px] bg-stone-100 text-[#4c5938] px-2 py-0.5 rounded-md font-bold">
-                              {globalActivities.filter(a => a.status === "completed").length} in archivio
-                            </span>
-                          </h4>
-
-                          {globalActivities.filter(a => a.status === "completed").length === 0 ? (
-                            <p className="text-center italic text-stone-400 py-4 font-sans">Nessuna faccenda completata in archivio.</p>
-                          ) : (
-                            <div className="space-y-2">
-                              {globalActivities.filter(a => a.status === "completed").map(a => {
-                                return (
-                                  <div key={a.id} className="bg-[#fafaf5] p-3 rounded-2xl border border-stone-150 flex items-start justify-between gap-3">
-                                    <div className="space-y-1">
-                                      <div className="flex items-center gap-2">
-                                        <span className="bg-emerald-100 text-emerald-800 text-[8px] font-mono px-1 rounded-sm uppercase font-bold">Spuntata</span>
-                                        <p className="font-semibold text-stone-650 line-through text-xs font-sans">{a.title}</p>
-                                      </div>
-                                      <div className="text-[9px] font-mono text-stone-400 flex items-center gap-2 flex-wrap">
-                                        <span>Priorità: {a.priority}</span>
-                                        <span>• Scadenza prevista: {a.dueDate}</span>
-                                        {a.completedAt && <span>• Completata: {new Date(a.completedAt).toLocaleDateString("it-IT")}</span>}
-                                      </div>
-                                    </div>
-                                    {!isReadOnlyMode ? (
-                                      <button
-                                        onClick={() => handleDeleteGlobalActivity(a.id)}
-                                        className="p-1 hover:bg-red-50 text-stone-400 hover:text-red-700 cursor-pointer transition-colors mt-0.5 flex-shrink-0 animate-pulse"
-                                        title="Elimina definitivamente dallo storico"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    ) : (
-                                      <span className="text-[8px] font-mono text-stone-400 uppercase self-start bg-stone-100 p-1 rounded-md">Solo Lettura</span>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-
-                      </div>
-
-                      <div className="pt-2 border-t border-[#e4e8e1] flex justify-end">
-                        <button
-                          type="button"
-                          onClick={() => setIsHistoryOpen(false)}
-                          className="px-4 py-2 bg-emerald-850 hover:bg-emerald-900 text-white font-mono text-xs rounded-xl font-bold cursor-pointer transition-all shadow-sm"
-                        >
-                          Chiudi Storico
-                        </button>
-                      </div>
-                    </motion.div>
-                  </div>
-                )}
-              </AnimatePresence>
             </motion.div>
+          );
+        })()}
+      </AnimatePresence>
+
+      {/* --- MODALE 8: STORICO GLOBALE ATTIVITA E CURE --- */}
+      <AnimatePresence>
+        {isHistoryOpen && (() => {
+          const trackersList = state.smartTrackers || [];
+          return (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-md flex items-center justify-center p-4 z-55">
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="bg-white rounded-3xl border border-[#e4e8e1] p-6 max-w-2xl w-full max-h-[85vh] flex flex-col space-y-4 font-sans shadow-2xl"
+              >
+                <div className="flex justify-between items-center pb-2 border-b border-[#e4e8e1]">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 bg-emerald-50 text-emerald-800 rounded-xl">
+                      <History className="w-5 h-5 animate-pulse" />
+                    </div>
+                    <div>
+                      <h3 className="font-serif font-bold text-[#2d3a27] text-base md:text-lg">
+                        Storico delle Attività e Tracciatori
+                      </h3>
+                      <p className="text-[10px] font-mono text-stone-400 uppercase tracking-widest">Archivio completo e permanente delle voci concluse</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsHistoryOpen(false)}
+                    className="p-1.5 hover:bg-[#e7ece5] rounded-xl text-stone-550 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Contenitore con scorrimento */}
+                <div className="flex-1 overflow-y-auto space-y-6 pr-1 text-xs">
+                  
+                  {/* Sezione 1: Tracciatori di Ciclo Conclusi */}
+                  <div className="space-y-3">
+                    <h4 className="font-serif font-semibold text-emerald-850 text-sm border-b border-stone-100 pb-1 flex justify-between items-center">
+                      <span>Tracciatori di Ciclo Completati</span>
+                      <span className="font-mono text-[9px] bg-stone-100 text-[#4c5938] px-2 py-0.5 rounded-md font-bold">
+                        {trackersList.filter(t => t.isCompleted).length} in archivio
+                      </span>
+                    </h4>
+
+                    {trackersList.filter(t => t.isCompleted).length === 0 ? (
+                      <p className="text-center italic text-stone-400 py-4 font-sans">Nessun tracciatore completato in archivio.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {trackersList.filter(t => t.isCompleted).map(t => {
+                          const targetDate = calculateTargetDate(t.startDate, t.durationDays);
+                          return (
+                            <div key={t.id} className="bg-[#fafaf5] p-3 rounded-2xl border border-stone-150 flex items-start justify-between gap-3">
+                              <div className="space-y-1">
+                                <p className="font-bold text-[#2d3a27] font-serif italic text-sm">{t.title}</p>
+                                {t.notes && <p className="text-[10px] text-stone-500 italic">"{t.notes}"</p>}
+                                <div className="text-[9px] font-mono text-stone-400 flex items-center gap-2 flex-wrap pt-1">
+                                  <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-md font-bold">Inizio: {t.startDate}</span>
+                                  <span className="bg-stone-100 text-stone-600 px-1.5 py-0.5 rounded-md font-bold">Ultimato il: {t.completedAt ? new Date(t.completedAt).toLocaleDateString("it-IT") : targetDate}</span>
+                                </div>
+                              </div>
+                              {!isReadOnlyMode ? (
+                                <button
+                                  onClick={() => handleDeleteTracker(t.id)}
+                                  className="p-1 hover:bg-red-50 text-stone-400 hover:text-red-600 rounded-lg cursor-pointer transition-colors mt-0.5 flex-shrink-0"
+                                  title="Elimina definitivamente"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              ) : (
+                                <span className="text-[8px] font-mono text-stone-400 uppercase self-start bg-stone-100 p-1 rounded-md">Solo Lettura</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Sezione 2: Faccende & Attività Chiuse */}
+                  <div className="space-y-3">
+                    <h4 className="font-serif font-semibold text-emerald-850 text-sm border-b border-stone-100 pb-1 flex justify-between items-center">
+                      <span>Svolte Botaniche / Faccende Chiuse</span>
+                      <span className="font-mono text-[9px] bg-stone-100 text-[#4c5938] px-2 py-0.5 rounded-md font-bold">
+                        {state.activities.filter(a => a.status === "completed").length} in archivio
+                      </span>
+                    </h4>
+
+                    {state.activities.filter(a => a.status === "completed").length === 0 ? (
+                      <p className="text-center italic text-stone-400 py-4 font-sans">Nessuna faccenda completata in archivio.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {state.activities.filter(a => a.status === "completed").map(a => {
+                          const associatedPlant = state.plants.find(p => p.id === a.plantId);
+                          const plantLabel = associatedPlant 
+                            ? `${associatedPlant.name} ${associatedPlant.nickname ? `(« ${associatedPlant.nickname} »)` : ""}`
+                            : "Faccenda Generale";
+                          return (
+                            <div key={a.id} className="bg-[#fafaf5] p-3 rounded-2xl border border-stone-150 flex items-start justify-between gap-3 shadow-3xs transition hover:border-[#7e8c69]/40">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="bg-emerald-100 text-emerald-800 text-[8px] font-mono px-1 rounded-sm uppercase font-bold">Spuntata</span>
+                                  <p className="font-semibold text-stone-650 line-through text-xs font-sans">{a.title}</p>
+                                </div>
+                                <p className="text-[9px] text-[#7e8c69] font-serif italic">Relativa a: {plantLabel}</p>
+                                <div className="text-[9px] font-mono text-stone-400 flex items-center gap-2 flex-wrap">
+                                  <span>Priorità: {a.priority}</span>
+                                  <span>• Scadenza prevista: {a.dueDate}</span>
+                                  {a.completedAt && <span>• Completata: {new Date(a.completedAt).toLocaleDateString("it-IT")}</span>}
+                                </div>
+                              </div>
+                              {!isReadOnlyMode ? (
+                                <button
+                                  onClick={() => handleDeleteGlobalActivity(a.id)}
+                                  className="p-1 hover:bg-red-50 text-stone-400 hover:text-red-700 cursor-pointer transition-colors mt-0.5 flex-shrink-0"
+                                  title="Elimina definitivamente dallo storico"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              ) : (
+                                <span className="text-[8px] font-mono text-stone-400 uppercase self-start bg-stone-100 p-1 rounded-md">Solo Lettura</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                </div>
+
+                <div className="pt-2 border-t border-[#e4e8e1] flex justify-between items-center">
+                  <div>
+                    {!isReadOnlyMode && (state.activities.filter(a => a.status === "completed").length > 0 || trackersList.filter(t => t.isCompleted).length > 0) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm("Sei sicuro di voler svuotare interamente lo storico? Tutti i tracciatori e le faccende completate verranno eliminati permanentemente.")) {
+                            setState(prev => ({
+                              ...prev,
+                              activities: prev.activities.filter(a => a.status !== "completed"),
+                              smartTrackers: (prev.smartTrackers || []).filter(t => !t.isCompleted)
+                            }));
+                            showToast("Storico interamente svuotato! 🧹🍃");
+                          }
+                        }}
+                        className="px-3.5 py-2 bg-red-50 hover:bg-red-150 active:scale-95 text-red-700 font-mono text-xs rounded-xl font-bold cursor-pointer transition-all border border-red-200/50 flex items-center gap-1.5"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Svuota Storico
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsHistoryOpen(false)}
+                    className="px-4 py-2 bg-emerald-850 hover:bg-emerald-900 text-white font-mono text-xs rounded-xl font-bold cursor-pointer transition-all shadow-sm"
+                  >
+                    Chiudi Storico
+                  </button>
+                </div>
+              </motion.div>
+            </div>
           );
         })()}
       </AnimatePresence>
@@ -3596,6 +3686,38 @@ export default function App() {
             <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></div>
             <span>{toastMessage}</span>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* --- MODALE 11: LIGHTBOX ANTEPRIMA IMMAGINI SCHERMO INTERO --- */}
+      <AnimatePresence>
+        {fullscreenImageUrl && (
+          <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 z-60 select-none">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="relative max-w-5xl w-full max-h-[90vh] flex flex-col items-center justify-center"
+            >
+              {/* Bottone Chiudi in alto a destra */}
+              <button
+                type="button"
+                onClick={() => setFullscreenImageUrl(null)}
+                className="absolute -top-12 right-0 md:-right-4 p-2 bg-white/15 hover:bg-white/25 active:scale-95 rounded-full text-white cursor-pointer transition-all border border-white/20 flex items-center justify-center"
+                title="Chiudi visualizzazione"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              {/* L'immagine stessa */}
+              <img
+                src={fullscreenImageUrl}
+                alt="Ingrandimento botanico"
+                className="max-w-full max-h-[85vh] object-contain rounded-2xl select-none shadow-2xl border border-white/10"
+                referrerPolicy="no-referrer"
+              />
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
