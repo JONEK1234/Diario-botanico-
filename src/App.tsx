@@ -125,7 +125,7 @@ export default function App() {
       activities: PRESET_ACTIVITIES,
       smartTrackers: defaultTrackersPreset,
       settings: {
-        userName: "Elena",
+        userName: "Samuel",
         gardenName: "Orto Botanico",
         offlineMode: false,
       }
@@ -232,6 +232,20 @@ export default function App() {
     parentPlantId?: string; // Utilizzato per eliminare le note di diario di una specifica pianta
     type: "activity" | "diary" | "completed-activity";
     title: string;
+  } | null>(null);
+
+  // Stato per l'editing di elementi
+  const [editingItem, setEditingItem] = useState<{
+    id: string;
+    parentPlantId?: string;
+    type: "activity" | "diary" | "completed-activity";
+    title: string;
+    notes?: string;
+    category?: string;
+    activityType?: string;
+    priority?: "bassa" | "media" | "alta";
+    dueDate?: string;
+    imageUrl?: string;
   } | null>(null);
 
   // Per tracciare la pressione prolungata
@@ -731,6 +745,107 @@ export default function App() {
       })
     }));
     showToast("Voce della cronologia eliminata definitivamente. 📒");
+  };
+
+  const startEditDiary = (entryId: string, plantId: string) => {
+    if (isReadOnlyMode) {
+      showToast("La serra è in sola lettura. Modifiche disabilitate. 🌿");
+      return;
+    }
+    const plant = state.plants.find(p => p.id === plantId);
+    const entry = plant?.diary?.find(d => d.id === entryId);
+    if (entry) {
+      setEditingItem({
+        id: entry.id,
+        parentPlantId: plantId,
+        type: "diary",
+        title: entry.eventTitle,
+        notes: entry.notes,
+        category: entry.category,
+        imageUrl: entry.imageUrl
+      });
+    }
+  };
+
+  const startEditActivity = (actId: string, isCompleted: boolean) => {
+    if (isReadOnlyMode) {
+      showToast("La serra è in sola lettura. Modifiche disabilitate. 🌿");
+      return;
+    }
+    const act = state.activities.find(a => a.id === actId);
+    if (act) {
+      setEditingItem({
+        id: act.id,
+        type: isCompleted ? "completed-activity" : "activity",
+        title: act.title,
+        activityType: act.type,
+        priority: act.priority,
+        dueDate: act.dueDate
+      });
+    }
+  };
+
+  const handleSaveEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isReadOnlyMode) {
+      showToast("La serra è in sola lettura. Modifiche disabilitate. 🌿");
+      return;
+    }
+    if (!editingItem) return;
+
+    if (editingItem.type === "diary") {
+      if (!editingItem.title.trim() || !editingItem.notes?.trim()) {
+        showToast("Inserisci titolo e testo della nota.");
+        return;
+      }
+      setState(prev => ({
+        ...prev,
+        plants: prev.plants.map(p => {
+          if (p.id === editingItem.parentPlantId) {
+            return {
+              ...p,
+              diary: (p.diary || []).map(d => {
+                if (d.id === editingItem.id) {
+                  return {
+                    ...d,
+                    eventTitle: editingItem.title,
+                    notes: editingItem.notes || "",
+                    category: (editingItem.category || d.category) as DiaryEntry["category"],
+                    imageUrl: editingItem.imageUrl
+                  };
+                }
+                return d;
+              })
+            };
+          }
+          return p;
+        })
+      }));
+      showToast("Nota del diario botanico salvata con successo! 📒");
+    } else {
+      if (!editingItem.title.trim()) {
+        showToast("Inserisci un titolo per l'attività.");
+        return;
+      }
+      setState(prev => ({
+        ...prev,
+        activities: prev.activities.map(act => {
+          if (act.id === editingItem.id) {
+            return {
+              ...act,
+              title: editingItem.title,
+              priority: (editingItem.priority || act.priority) as CareActivity["priority"],
+              dueDate: editingItem.dueDate || act.dueDate,
+              type: editingItem.activityType || act.type
+            };
+          }
+          return act;
+        })
+      }));
+      showToast("Attività botanica aggiornata correttamente! 🗓️");
+    }
+
+    setEditingItem(null);
   };
 
   // Funzioni helper per la gestione degli eventi di Pressione Prolungata (Long Press)
@@ -1909,9 +2024,22 @@ export default function App() {
                             day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit"
                           })}</span>
 
-                          <span className="capitalize text-[8px] tracking-wider uppercase bg-[#f5f5f0] border border-[#e2e2d8] font-bold p-0.5 px-2 rounded-md font-mono text-sage-600">
-                            {entry.category || "osservazione"}
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                startEditDiary(entry.id, selectedPlant.id);
+                              }}
+                              className="p-1 hover:bg-sage-100/60 rounded-lg text-sage-500 hover:text-indigo-600 transition-all cursor-pointer flex items-center justify-center bg-stone-50/50"
+                              title="Modifica nota"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <span className="capitalize text-[8px] tracking-wider uppercase bg-[#f5f5f0] border border-[#e2e2d8] font-bold p-0.5 px-2 rounded-md font-mono text-sage-600">
+                              {entry.category || "osservazione"}
+                            </span>
+                          </div>
                         </div>
 
                         <h4 className="font-serif italic font-bold text-[#2d3a27] mt-1.5 text-[14px]">{entry.eventTitle}</h4>
@@ -2001,7 +2129,20 @@ export default function App() {
                     </div>
 
                     <div className="flex-1 min-w-0">
-                      <h4 className="text-xs font-bold text-[#2d3a2e] leading-tight truncate">{a.title}</h4>
+                      <div className="flex items-start justify-between gap-1.5">
+                        <h4 className="text-xs font-bold text-[#2d3a2e] leading-tight truncate flex-1">{a.title}</h4>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            startEditActivity(a.id, false);
+                          }}
+                          className="p-1 hover:bg-sage-100/60 text-sage-400 hover:text-indigo-600 transition-all rounded-lg cursor-pointer flex items-center justify-center bg-stone-50/50"
+                          title="Modifica attività"
+                        >
+                          <Edit className="w-3 h-3" />
+                        </button>
+                      </div>
                       <p className="text-[9px] font-mono text-[#7e8c69] uppercase tracking-wider mt-0.5 truncate">
                         {associatedPlant ? associatedPlant.nickname : "Nota generica"}
                       </p>
@@ -2081,9 +2222,22 @@ export default function App() {
                   })}
                   className="p-3 bg-[#fafafa] hover:bg-red-50/10 hover:border-red-100 active:scale-[0.98] select-none transition-all cursor-pointer rounded-xl border border-[#e2e2d8] text-[10px] text-sage-600 space-y-1"
                 >
-                  <div className="flex items-center gap-1 text-[#2d3a27] font-semibold uppercase text-[9px]">
-                    <CheckSquare className="w-3 h-3 text-[#7e8c69] flex-shrink-0" />
-                    <span>{a.title}</span>
+                  <div className="flex items-center justify-between gap-1.5 text-[#2d3a27] font-semibold uppercase text-[9px]">
+                    <div className="flex items-center gap-1">
+                      <CheckSquare className="w-3 h-3 text-[#7e8c69] flex-shrink-0" />
+                      <span>{a.title}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startEditActivity(a.id, true);
+                      }}
+                      className="p-1 hover:bg-sage-100/60 text-sage-400 hover:text-indigo-600 transition-all rounded-lg cursor-pointer flex items-center justify-center bg-stone-50/50"
+                      title="Modifica storico"
+                    >
+                      <Edit className="w-3 h-3" />
+                    </button>
                   </div>
                   <p className="text-[9px] text-[#8e9299] font-mono">Chiusa il {a.completedAt ? new Date(a.completedAt).toLocaleDateString("it-IT") : ""}</p>
                   {a.completedNotes && <p className="italic font-serif">« {a.completedNotes} »</p>}
@@ -3835,13 +3989,30 @@ export default function App() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 pt-2">
+              <div className="grid grid-cols-3 gap-1 pt-2">
                 <button
                   type="button"
                   onClick={() => setDeleteConfirmItem(null)}
-                  className="py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-700 font-mono text-[10px] rounded-xl font-bold transition-all cursor-pointer text-center"
+                  className="py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-700 font-mono text-[9px] rounded-xl font-bold transition-all cursor-pointer text-center"
                 >
                   Annulla
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const item = deleteConfirmItem;
+                    setDeleteConfirmItem(null);
+                    if (item.type === "diary" && item.parentPlantId) {
+                      startEditDiary(item.id, item.parentPlantId);
+                    } else if (item.type === "completed-activity") {
+                      startEditActivity(item.id, true);
+                    } else {
+                      startEditActivity(item.id, false);
+                    }
+                  }}
+                  className="py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-mono text-[9px] rounded-xl font-bold transition-all cursor-pointer text-center flex items-center justify-center gap-1"
+                >
+                  <Edit className="w-2.5 h-2.5" /> Modifica
                 </button>
                 <button
                   type="button"
@@ -3854,11 +4025,187 @@ export default function App() {
                       handleDeleteGlobalActivity(item.id);
                     }
                   }}
-                  className="py-2.5 bg-red-600 hover:bg-red-700 text-white font-mono text-[10px] rounded-xl font-bold transition-all cursor-pointer text-center"
+                  className="py-2.5 bg-red-600 hover:bg-red-700 text-white font-mono text-[9px] rounded-xl font-bold transition-all cursor-pointer text-center"
                 >
                   Sì, Elimina
                 </button>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* --- MODALE 12: MODIFICA ELEMENTO SELEZIONATO --- */}
+      <AnimatePresence>
+        {editingItem && (
+          <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-[90]">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 15 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              className="bg-white rounded-3xl border border-[#e4e8e1] p-6 max-w-md w-full space-y-4 shadow-2xl font-sans text-xs text-sage-800"
+            >
+              <div className="flex items-center justify-between pb-3 border-b border-stone-100">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
+                    <Edit className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-serif font-bold text-stone-850 text-sm">Modifica Elemento</h3>
+                    <p className="text-[9px] font-mono text-indigo-500 uppercase tracking-wider font-semibold">
+                      {editingItem.type === "diary" ? "Nota di Diario" : "Attività Botanica"}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingItem(null)}
+                  className="p-1 hover:bg-stone-100 rounded-lg text-stone-400 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveEdit} className="space-y-4">
+                {/* Campo Titolo / EventTitle */}
+                <div className="space-y-1">
+                  <label className="block text-stone-600 font-bold uppercase text-[9px] tracking-wider font-mono">
+                    Titolo / Nome
+                  </label>
+                  <input
+                    type="text"
+                    value={editingItem.title}
+                    onChange={(e) => setEditingItem({ ...editingItem, title: e.target.value })}
+                    className="w-full bg-[#fcfcf9] p-2.5 rounded-xl border border-[#e2e2d8] focus:border-[#2d3a27] focus:outline-hidden text-xs text-stone-800"
+                    placeholder="Es. Irrigazione straordinaria"
+                    required
+                  />
+                </div>
+
+                {/* Se è una nota del diario, mostriamo il campo Note e Categoria */}
+                {editingItem.type === "diary" && (
+                  <>
+                    <div className="space-y-1">
+                      <label className="block text-stone-600 font-bold uppercase text-[9px] tracking-wider font-mono">
+                        Categoria Nota
+                      </label>
+                      <select
+                        value={editingItem.category || "osservazione"}
+                        onChange={(e) => setEditingItem({ ...editingItem, category: e.target.value })}
+                        className="w-full bg-[#fcfcf9] p-2.5 rounded-xl border border-[#e2e2d8] focus:border-[#2d3a27] focus:outline-hidden text-xs text-stone-800 cursor-pointer"
+                      >
+                        <option value="osservazione">👁️ Osservazione</option>
+                        <option value="irrigazione">💧 Irrigazione / Acqua</option>
+                        <option value="concimazione">🧪 Concimazione</option>
+                        <option value="rinvaso">🪴 Rinvaso biologico</option>
+                        <option value="potatura">✂️ Potatura rami</option>
+                        <option value="trattamento">🛡️ Trattamento parassiti</option>
+                        <option value="fioritura">🌸 Svolta fioritura</option>
+                        <option value="raccolto">🍎 Raccolto frutti</option>
+                        <option value="morte">💀 Segnale di appassimento/morte</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="block text-stone-600 font-bold uppercase text-[9px] tracking-wider font-mono">
+                        Testo Dettagliato
+                      </label>
+                      <textarea
+                        value={editingItem.notes || ""}
+                        onChange={(e) => setEditingItem({ ...editingItem, notes: e.target.value })}
+                        rows={4}
+                        className="w-full bg-[#fcfcf9] p-2.5 rounded-xl border border-[#e2e2d8] focus:border-[#2d3a27] focus:outline-hidden text-xs text-stone-800 leading-relaxed font-sans"
+                        placeholder="Descrivi cosa hai osservato o fatto in dettaglio..."
+                        required
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="block text-stone-600 font-bold uppercase text-[9px] tracking-wider font-mono">
+                        URL Immagine (Opzionale)
+                      </label>
+                      <input
+                        type="url"
+                        value={editingItem.imageUrl || ""}
+                        onChange={(e) => setEditingItem({ ...editingItem, imageUrl: e.target.value })}
+                        className="w-full bg-[#fcfcf9] p-2.5 rounded-xl border border-[#e2e2d8] focus:border-[#2d3a27] focus:outline-hidden text-xs text-stone-800"
+                        placeholder="https://images.unsplash.com/..."
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* Se è un'attività (attiva o completata), mostriamo campi Categoria Attività, Scadenza, Priorità */}
+                {editingItem.type !== "diary" && (
+                  <>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="block text-stone-600 font-bold uppercase text-[9px] tracking-wider font-mono">
+                          Tipo Attività
+                        </label>
+                        <select
+                          value={editingItem.activityType || "generale"}
+                          onChange={(e) => setEditingItem({ ...editingItem, activityType: e.target.value })}
+                          className="w-full bg-[#fcfcf9] p-2.5 rounded-xl border border-[#e2e2d8] focus:border-[#2d3a27] focus:outline-hidden text-xs text-stone-800 cursor-pointer"
+                        >
+                          <option value="irrigazione">💧 Irrigazione</option>
+                          <option value="concimazione">🧪 Concimazione</option>
+                          <option value="rinvaso">🪴 Rinvaso</option>
+                          <option value="potatura">✂️ Potatura</option>
+                          <option value="pulizia">🧹 Pulizia foglie</option>
+                          <option value="ispezione">🔍 Ispezione</option>
+                          <option value="generale">🌱 Generale</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="block text-stone-600 font-bold uppercase text-[9px] tracking-wider font-mono">
+                          Priorità
+                        </label>
+                        <select
+                          value={editingItem.priority || "media"}
+                          onChange={(e) => setEditingItem({ ...editingItem, priority: e.target.value as "bassa" | "media" | "alta" })}
+                          className="w-full bg-[#fcfcf9] p-2.5 rounded-xl border border-[#e2e2d8] focus:border-[#2d3a27] focus:outline-hidden text-xs text-stone-800 cursor-pointer"
+                        >
+                          <option value="bassa">🟢 Bassa priority</option>
+                          <option value="media">🟡 Media priority</option>
+                          <option value="alta">🔴 Alta priority</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="block text-stone-600 font-bold uppercase text-[9px] tracking-wider font-mono">
+                        Data Scadenza
+                      </label>
+                      <input
+                        type="date"
+                        value={editingItem.dueDate || ""}
+                        onChange={(e) => setEditingItem({ ...editingItem, dueDate: e.target.value })}
+                        className="w-full bg-[#fcfcf9] p-2.5 rounded-xl border border-[#e2e2d8] focus:border-[#2d3a27] focus:outline-hidden text-xs text-stone-800"
+                        required
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* Bottoni Salva / Chiudi */}
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-stone-100">
+                  <button
+                    type="button"
+                    onClick={() => setEditingItem(null)}
+                    className="py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-700 font-mono text-[10px] rounded-xl font-bold transition-all cursor-pointer text-center"
+                  >
+                    Annulla
+                  </button>
+                  <button
+                    type="submit"
+                    className="py-2.5 bg-[#2d3a27] hover:bg-[#1a2318] text-white font-mono text-[10px] rounded-xl font-bold transition-all cursor-pointer text-center"
+                  >
+                    Salva Modifiche
+                  </button>
+                </div>
+              </form>
             </motion.div>
           </div>
         )}
