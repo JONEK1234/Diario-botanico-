@@ -169,22 +169,34 @@ export default function App() {
   const [isAgendaOpen, setIsAgendaOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isAddTrackerOpen, setIsAddTrackerOpen] = useState(false);
-  const [newTrackerForm, setNewTrackerForm] = useState({
-    title: "",
-    startDate: new Date().toISOString().split("T")[0],
-    durationDays: 21,
-    notes: ""
+  const [newTrackerForm, setNewTrackerForm] = useState(() => {
+    try {
+      const saved = localStorage.getItem("flora_new_tracker_form");
+      if (saved) return JSON.parse(saved);
+    } catch (_) {}
+    return {
+      title: "",
+      startDate: new Date().toISOString().split("T")[0],
+      durationDays: 21,
+      notes: ""
+    };
   });
   const [agendaFormTitle, setAgendaFormTitle] = useState("");
   const [agendaFormPriority, setAgendaFormPriority] = useState<"bassa" | "media" | "alta">("media");
   const [agendaFormDueDate, setAgendaFormDueDate] = useState(new Date().toISOString().split("T")[0]);
 
   // Form Attività Personalizzata Nuova
-  const [newActivityForm, setNewActivityForm] = useState({
-    title: "",
-    type: "generale" as CareActivity["type"],
-    priority: "media" as CareActivity["priority"],
-    dueDate: new Date().toISOString().split("T")[0]
+  const [newActivityForm, setNewActivityForm] = useState(() => {
+    try {
+      const saved = localStorage.getItem("flora_new_activity_form");
+      if (saved) return JSON.parse(saved);
+    } catch (_) {}
+    return {
+      title: "",
+      type: "generale" as CareActivity["type"],
+      priority: "media" as CareActivity["priority"],
+      dueDate: new Date().toISOString().split("T")[0]
+    };
   });
 
   // Modalità Sola Lettura per link condivisi (#share= o #sharez=)
@@ -195,27 +207,39 @@ export default function App() {
   const latestNoteRef = useRef<HTMLDivElement>(null);
 
   // Form Pianta Nuova / Modifica
-  const [newPlantForm, setNewPlantForm] = useState<Partial<Plant>>({
-    name: "",
-    nickname: "",
-    species: "",
-    origin: PlantOrigin.ACQUISTO,
-    startDate: new Date().toISOString().split("T")[0],
-    description: "",
-    imageUrl: "",
-    status: PlantStatus.CRESCITA,
-    health: 90,
-    notes: "",
-    tags: []
+  const [newPlantForm, setNewPlantForm] = useState<Partial<Plant>>(() => {
+    try {
+      const saved = localStorage.getItem("flora_new_plant_form");
+      if (saved) return JSON.parse(saved);
+    } catch (_) {}
+    return {
+      name: "",
+      nickname: "",
+      species: "",
+      origin: PlantOrigin.ACQUISTO,
+      startDate: new Date().toISOString().split("T")[0],
+      description: "",
+      imageUrl: "",
+      status: PlantStatus.CRESCITA,
+      health: 90,
+      notes: "",
+      tags: []
+    };
   });
   const [draftTag, setDraftTag] = useState("");
 
   // Form Nota Diario Nuova
-  const [newDiaryForm, setNewDiaryForm] = useState({
-    eventTitle: "",
-    notes: "",
-    imageUrl: "",
-    category: "osservazione" as DiaryEntry["category"]
+  const [newDiaryForm, setNewDiaryForm] = useState(() => {
+    try {
+      const saved = localStorage.getItem("flora_new_diary_form");
+      if (saved) return JSON.parse(saved);
+    } catch (_) {}
+    return {
+      eventTitle: "",
+      notes: "",
+      imageUrl: "",
+      category: "osservazione" as DiaryEntry["category"]
+    };
   });
 
   // Stato AI Curator Assistant
@@ -246,7 +270,13 @@ export default function App() {
     priority?: "bassa" | "media" | "alta";
     dueDate?: string;
     imageUrl?: string;
-  } | null>(null);
+  } | null>(() => {
+    try {
+      const saved = localStorage.getItem("flora_editing_item");
+      if (saved) return JSON.parse(saved);
+    } catch (_) {}
+    return null;
+  });
 
   // Per tracciare la pressione prolungata
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -272,6 +302,41 @@ export default function App() {
       localStorage.setItem("flora_selected_plant_id", selectedPlantId);
     }
   }, [selectedPlantId, isReadOnlyMode]);
+
+  // Salvataggio automatico dei dati parziali dei form per evitare perdite se l'utente esce dall'app
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("flora_new_tracker_form", JSON.stringify(newTrackerForm));
+    }
+  }, [newTrackerForm]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("flora_new_activity_form", JSON.stringify(newActivityForm));
+    }
+  }, [newActivityForm]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("flora_new_plant_form", JSON.stringify(newPlantForm));
+    }
+  }, [newPlantForm]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("flora_new_diary_form", JSON.stringify(newDiaryForm));
+    }
+  }, [newDiaryForm]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      if (editingItem) {
+        localStorage.setItem("flora_editing_item", JSON.stringify(editingItem));
+      } else {
+        localStorage.removeItem("flora_editing_item");
+      }
+    }
+  }, [editingItem]);
 
   // Caricamento asincrono per link condivisi (ID server o compressi offline)
   useEffect(() => {
@@ -2156,7 +2221,23 @@ export default function App() {
                           {a.priority}
                         </span>
 
-                        <span className="text-[#8e9299]">Scadenza: {a.dueDate}</span>
+                        <div className="text-right flex flex-col items-end">
+                          <span className="text-[#8e9299]">Scadenza: {a.dueDate}</span>
+                          {(() => {
+                            try {
+                              const todayStr = new Date().toISOString().split("T")[0];
+                              const tomorrow = new Date();
+                              tomorrow.setDate(tomorrow.getDate() + 1);
+                              const tomorrowStr = tomorrow.toISOString().split("T")[0];
+                              if (a.dueDate === todayStr) {
+                                return <span className="text-red-650 font-bold uppercase text-[7px] tracking-wider mt-0.5 animate-pulse bg-red-50 px-1 rounded">🔴 Scadenza oggi</span>;
+                              } else if (a.dueDate === tomorrowStr) {
+                                return <span className="text-amber-700 font-bold uppercase text-[7px] tracking-wider mt-0.5 bg-amber-50 px-1 rounded">🟡 Scadenza domani</span>;
+                              }
+                            } catch (_) {}
+                            return null;
+                          })()}
+                        </div>
                       </div>
                     </div>
                   </motion.div>
@@ -3436,6 +3517,20 @@ export default function App() {
                                       {a.priority}
                                     </span>
                                     <span>• Scad. {new Date(a.dueDate).toLocaleDateString("it-IT", { day: '2-digit', month: '2-digit' })}</span>
+                                    {(() => {
+                                      try {
+                                        const todayStr = new Date().toISOString().split("T")[0];
+                                        const tomorrow = new Date();
+                                        tomorrow.setDate(tomorrow.getDate() + 1);
+                                        const tomorrowStr = tomorrow.toISOString().split("T")[0];
+                                        if (a.dueDate === todayStr) {
+                                          return <span className="text-red-600 font-extrabold animate-pulse bg-red-50/50 px-1 rounded">🔴 OGGI</span>;
+                                        } else if (a.dueDate === tomorrowStr) {
+                                          return <span className="text-amber-700 font-extrabold bg-amber-50 px-1 rounded">🟡 DOMANI</span>;
+                                        }
+                                      } catch (_) {}
+                                      return null;
+                                    })()}
                                   </div>
                                 </div>
                               </div>
