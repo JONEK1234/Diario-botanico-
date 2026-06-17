@@ -148,11 +148,36 @@ export default function App() {
   const [selectedTagFilter, setSelectedTagFilter] = useState<string>("all");
 
   // Stato Modali / Form
-  const [isAddPlantOpen, setIsAddPlantOpen] = useState(false);
-  const [isEditPlantOpen, setIsEditPlantOpen] = useState(false);
-  const [isNewDiaryOpen, setIsNewDiaryOpen] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isAddActivityOpen, setIsAddActivityOpen] = useState(false);
+  const [isAddPlantOpen, setIsAddPlantOpen] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("flora_is_add_plant_open") === "true";
+    }
+    return false;
+  });
+  const [isEditPlantOpen, setIsEditPlantOpen] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("flora_is_edit_plant_open") === "true";
+    }
+    return false;
+  });
+  const [isNewDiaryOpen, setIsNewDiaryOpen] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("flora_is_new_diary_open") === "true";
+    }
+    return false;
+  });
+  const [isSettingsOpen, setIsSettingsOpen] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("flora_is_settings_open") === "true";
+    }
+    return false;
+  });
+  const [isAddActivityOpen, setIsAddActivityOpen] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("flora_is_add_activity_open") === "true";
+    }
+    return false;
+  });
   const [plantIdToDelete, setPlantIdToDelete] = useState<string | null>(null);
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [generatedShareUrl, setGeneratedShareUrl] = useState("");
@@ -166,9 +191,24 @@ export default function App() {
   const [isMemorialOpen, setIsMemorialOpen] = useState(false);
 
   // Stati per Agenda Globale Botanica e Smart Trackers
-  const [isAgendaOpen, setIsAgendaOpen] = useState(false);
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const [isAddTrackerOpen, setIsAddTrackerOpen] = useState(false);
+  const [isAgendaOpen, setIsAgendaOpen] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("flora_is_agenda_open") === "true";
+    }
+    return false;
+  });
+  const [isHistoryOpen, setIsHistoryOpen] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("flora_is_history_open") === "true";
+    }
+    return false;
+  });
+  const [isAddTrackerOpen, setIsAddTrackerOpen] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("flora_is_add_tracker_open") === "true";
+    }
+    return false;
+  });
   const [newTrackerForm, setNewTrackerForm] = useState(() => {
     try {
       const saved = localStorage.getItem("flora_new_tracker_form");
@@ -337,6 +377,55 @@ export default function App() {
       }
     }
   }, [editingItem]);
+
+  // Persistenza stato modali/dialoghi di input
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("flora_is_add_plant_open", String(isAddPlantOpen));
+    }
+  }, [isAddPlantOpen]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("flora_is_edit_plant_open", String(isEditPlantOpen));
+    }
+  }, [isEditPlantOpen]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("flora_is_new_diary_open", String(isNewDiaryOpen));
+    }
+  }, [isNewDiaryOpen]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("flora_is_settings_open", String(isSettingsOpen));
+    }
+  }, [isSettingsOpen]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("flora_is_add_activity_open", String(isAddActivityOpen));
+    }
+  }, [isAddActivityOpen]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("flora_is_agenda_open", String(isAgendaOpen));
+    }
+  }, [isAgendaOpen]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("flora_is_history_open", String(isHistoryOpen));
+    }
+  }, [isHistoryOpen]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("flora_is_add_tracker_open", String(isAddTrackerOpen));
+    }
+  }, [isAddTrackerOpen]);
 
   // Caricamento asincrono per link condivisi (ID server o compressi offline)
   useEffect(() => {
@@ -2154,7 +2243,7 @@ export default function App() {
                 <span className="text-[10px] font-mono bg-[#7e8c69] rounded-full px-2.5 py-0.5 text-white font-semibold flex items-center justify-center">
                   {state.activities.filter(a => {
                     const p = state.plants.find(plant => plant.id === a.plantId);
-                    return a.status === "todo" && (!p || !p.isDead);
+                    return a.status === "todo" && (!p || !p.isDead) && (!selectedPlant || a.plantId === selectedPlant.id);
                   }).length}
                 </span>
               </div>
@@ -2164,7 +2253,7 @@ export default function App() {
             <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
               {state.activities.filter(a => {
                 const p = state.plants.find(plant => plant.id === a.plantId);
-                return a.status === "todo" && (!p || !p.isDead);
+                return a.status === "todo" && (!p || !p.isDead) && (!selectedPlant || a.plantId === selectedPlant.id);
               }).map(a => {
                 const associatedPlant = state.plants.find(p => p.id === a.plantId);
                 const isUrgent = a.priority === "alta";
@@ -2244,8 +2333,11 @@ export default function App() {
                 );
               })}
 
-              {state.activities.filter(a => a.status === "todo").length === 0 && (
-                <p className="text-xs text-sage-400 italic text-center py-8">Nessun dovere programmato oggi.</p>
+              {state.activities.filter(a => {
+                const p = state.plants.find(plant => plant.id === a.plantId);
+                return a.status === "todo" && (!p || !p.isDead) && (!selectedPlant || a.plantId === selectedPlant.id);
+              }).length === 0 && (
+                <p className="text-xs text-sage-400 italic text-center py-8">Nessun dovere programmato per questa pianta.</p>
               )}
             </div>
 
@@ -2765,7 +2857,7 @@ export default function App() {
                 <div className="flex flex-col gap-1">
                   <div className="flex justify-between items-center text-[10px] font-mono text-sage-400 uppercase">
                     <span>Valutazione livello salute</span>
-                    <span className="font-bold text-sage-800">{newPlantForm.health}%</span>
+                    <span className="font-bold text-sage-800">{newPlantForm.health ?? 90}%</span>
                   </div>
                   <input
                     type="range"
