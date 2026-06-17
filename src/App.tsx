@@ -3496,9 +3496,10 @@ export default function App() {
           const now = Date.now();
           const thirtyMinutes = 30 * 60 * 1000;
 
-          // Trackers: non completati (quelli completati si archiviano subito)
+          // Trackers: non completati e non spuntati oggi (quelli completati o gestiti oggi si archiviano subito)
           const trackersList = state.smartTrackers || [];
-          const activeTrackersShown = trackersList.filter(t => !t.isCompleted);
+          const todayStrForActive = new Date().toISOString().split("T")[0];
+          const activeTrackersShown = trackersList.filter(t => !t.isCompleted && !(t.checkIns || []).includes(todayStrForActive));
 
           // Filtra attività generiche (globali, dove plantId === "global")
           const globalActivities = state.activities.filter(a => a.plantId === "global");
@@ -3996,42 +3997,90 @@ export default function App() {
                 {/* Contenitore con scorrimento */}
                 <div className="flex-1 overflow-y-auto space-y-6 pr-1 text-xs">
                   
-                  {/* Sezione 1: Tracciatori di Ciclo Conclusi */}
+                  {/* Sezione 1: Tracciatori di Ciclo Conclusi o Gestiti Oggi */}
                   <div className="space-y-3">
                     <h4 className="font-serif font-semibold text-emerald-850 text-sm border-b border-stone-100 pb-1 flex justify-between items-center">
-                      <span>Tracciatori di Ciclo Completati</span>
+                      <span>Tracciatori di Ciclo (In Archivio / Gestiti oggi)</span>
                       <span className="font-mono text-[9px] bg-stone-100 text-[#4c5938] px-2 py-0.5 rounded-md font-bold">
-                        {trackersList.filter(t => t.isCompleted).length} in archivio
+                        {trackersList.filter(t => t.isCompleted || (t.checkIns || []).includes(new Date().toISOString().split("T")[0])).length} voci
                       </span>
                     </h4>
 
-                    {trackersList.filter(t => t.isCompleted).length === 0 ? (
-                      <p className="text-center italic text-stone-400 py-4 font-sans">Nessun tracciatore completato in archivio.</p>
+                    {trackersList.filter(t => t.isCompleted || (t.checkIns || []).includes(new Date().toISOString().split("T")[0])).length === 0 ? (
+                      <p className="text-center italic text-stone-400 py-4 font-sans">Nessun tracciatore in archivio o gestito oggi.</p>
                     ) : (
                       <div className="space-y-2">
-                        {trackersList.filter(t => t.isCompleted).map(t => {
-                          const targetDate = calculateTargetDate(t.startDate, t.durationDays);
+                        {trackersList.filter(t => t.isCompleted || (t.checkIns || []).includes(new Date().toISOString().split("T")[0])).map(t => {
+                          const effectiveStartDate = getEffectiveStartDate(t);
+                          const elapsed = calculateElapsedDays(t);
+                          const targetDate = calculateTargetDate(effectiveStartDate, t.durationDays);
+                          const todayStr = new Date().toISOString().split("T")[0];
+                          const todayChecked = (t.checkIns || []).includes(todayStr);
+                          const progressPercent = Math.min(100, Math.round((elapsed / t.durationDays) * 100));
+
                           return (
-                            <div key={t.id} className="bg-[#fafaf5] p-3 rounded-2xl border border-stone-150 flex items-start justify-between gap-3">
-                              <div className="space-y-1">
-                                <p className="font-bold text-[#2d3a27] font-serif italic text-sm">{t.title}</p>
-                                {t.notes && <p className="text-[10px] text-stone-500 italic whitespace-pre-wrap">"{t.notes}"</p>}
-                                <div className="text-[9px] font-mono text-stone-400 flex items-center gap-2 flex-wrap pt-1">
-                                  <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-md font-bold">Inizio: {t.startDate}</span>
-                                  <span className="bg-stone-100 text-stone-600 px-1.5 py-0.5 rounded-md font-bold">Ultimato il: {t.completedAt ? new Date(t.completedAt).toLocaleDateString("it-IT") : targetDate}</span>
+                            <div key={t.id} className="bg-[#fafaf5] p-3 rounded-2xl border border-stone-150 flex flex-col gap-2">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className={`text-[8px] font-mono uppercase p-0.5 px-2 rounded-md font-bold ${
+                                      t.isCompleted 
+                                        ? "bg-stone-200 text-stone-600" 
+                                        : "bg-emerald-100 text-emerald-800"
+                                    }`}>
+                                      {t.isCompleted ? "Completato" : "In Corso (Gestito oggi)"}
+                                    </span>
+                                    {todayChecked && !t.isCompleted && (
+                                      <span className="text-[8px] font-mono font-bold uppercase text-emerald-700 bg-emerald-50 px-1 rounded border border-emerald-100">fatto</span>
+                                    )}
+                                  </div>
+                                  <p className="font-bold text-[#2d3a27] font-serif italic text-sm">{t.title}</p>
+                                  {t.notes && <p className="text-[10px] text-stone-500 italic whitespace-pre-wrap">"{t.notes}"</p>}
+                                  <div className="text-[9px] font-mono text-stone-400 flex items-center gap-2 flex-wrap pt-1">
+                                    <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-md font-bold">Inizio: {new Date(effectiveStartDate).toLocaleDateString("it-IT", { day: '2-digit', month: '2-digit' })}</span>
+                                    <span className="bg-stone-100 text-stone-600 px-1.5 py-0.5 rounded-md font-bold">Cura attiva fin: {targetDate}</span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  {/* Bottone per sbloccare/deselezionare anche dallo storico */}
+                                  {!t.isCompleted && todayChecked && (
+                                    <button
+                                      onClick={() => handleToggleTracker(t.id)}
+                                      className="p-1 hover:bg-[#e7ece5] text-[#4c5938] hover:text-red-700 rounded-lg cursor-pointer transition-colors"
+                                      title="Riapri tracciamento (rimuovi spunta di oggi)"
+                                    >
+                                      <CheckSquare className="w-4 h-4 text-emerald-700 font-bold" />
+                                    </button>
+                                  )}
+                                  {!isReadOnlyMode ? (
+                                    <button
+                                      onClick={() => handleDeleteTracker(t.id)}
+                                      className="p-1 hover:bg-red-50 text-stone-400 hover:text-red-600 rounded-lg cursor-pointer transition-colors mt-0.5 flex-shrink-0"
+                                      title="Elimina definitivamente"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  ) : (
+                                    <span className="text-[8px] font-mono text-stone-400 uppercase self-start bg-stone-100 p-1 rounded-md">Solo Lettura</span>
+                                  )}
                                 </div>
                               </div>
-                              {!isReadOnlyMode ? (
-                                <button
-                                  onClick={() => handleDeleteTracker(t.id)}
-                                  className="p-1 hover:bg-red-50 text-stone-400 hover:text-red-600 rounded-lg cursor-pointer transition-colors mt-0.5 flex-shrink-0"
-                                  title="Elimina definitivamente"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              ) : (
-                                <span className="text-[8px] font-mono text-stone-400 uppercase self-start bg-stone-100 p-1 rounded-md">Solo Lettura</span>
-                              )}
+
+                              {/* Progress bar anche nello storico */}
+                              <div className="space-y-1 bg-white p-2 border border-stone-150 rounded-xl font-sans">
+                                <div className="flex justify-between text-[10px] font-mono">
+                                  <span className="text-stone-500 font-bold uppercase text-[8px] tracking-wider">Avanzamento temporale:</span>
+                                  <span className="font-extrabold text-[#2d3a27]">
+                                    {t.isCompleted ? `Giorno ${elapsed} di ${t.durationDays} (Fermo)` : `Giorno ${elapsed} di ${t.durationDays}`}
+                                  </span>
+                                </div>
+                                <div className="w-full h-1 bg-stone-100 rounded-full overflow-hidden">
+                                  <div 
+                                    className={`h-full transition-all duration-550 ${t.isCompleted ? "bg-[#7e8c69]" : "bg-emerald-600"}`}
+                                    style={{ width: `${progressPercent}%` }}
+                                  />
+                                </div>
+                              </div>
                             </div>
                           );
                         })}
