@@ -109,6 +109,23 @@ export default function App() {
       try {
         const parsed = JSON.parse(saved);
         if (parsed.plants && parsed.plants.length > 0) {
+          // Migrazione da Elena a Samuel
+          if (!parsed.settings) {
+            parsed.settings = { userName: "Samuel", gardenName: "Orto Botanico di Samuel", offlineMode: false };
+          } else {
+            if (parsed.settings.userName === "Elena" || parsed.settings.userName === "elena" || parsed.settings.userName === "Ospite") {
+              parsed.settings.userName = "Samuel";
+            }
+            if (!parsed.settings.gardenName || parsed.settings.gardenName.includes("Elena") || parsed.settings.gardenName.includes("elena") || parsed.settings.gardenName === "Orto Botanico" || parsed.settings.gardenName.includes("di Samuel di Samuel")) {
+              parsed.settings.gardenName = (parsed.settings.gardenName || "").replace(/Elena/g, "Samuel").replace(/elena/g, "Samuel");
+              if (!parsed.settings.gardenName || parsed.settings.gardenName === "Orto Botanico") {
+                parsed.settings.gardenName = "Orto Botanico di Samuel";
+              }
+            }
+            if (parsed.settings.gardenName && parsed.settings.gardenName.includes("di Samuel di Samuel")) {
+              parsed.settings.gardenName = parsed.settings.gardenName.replace(/di Samuel di Samuel/g, "di Samuel");
+            }
+          }
           return {
             ...parsed,
             smartTrackers: parsed.smartTrackers !== undefined ? parsed.smartTrackers : defaultTrackersPreset
@@ -126,7 +143,7 @@ export default function App() {
       smartTrackers: defaultTrackersPreset,
       settings: {
         userName: "Samuel",
-        gardenName: "Orto Botanico",
+        gardenName: "Orto Botanico di Samuel",
         offlineMode: false,
       }
     };
@@ -758,6 +775,38 @@ export default function App() {
     showToast("Riposizionata nella serra attiva! 🌿✨");
   };
 
+  const getEffectiveStartDate = (t: SmartTracker) => {
+    const checkIns = t.checkIns || [];
+    const todayStr = new Date().toISOString().split("T")[0];
+    const checkedCount = checkIns.length;
+    
+    if (t.isCompleted) {
+      return t.startDate;
+    }
+    
+    const isTodayChecked = checkIns.includes(todayStr);
+    
+    if (isTodayChecked) {
+      try {
+        const todayDate = new Date(todayStr + "T00:00:00");
+        const offsetMs = (checkedCount - 1) * 24 * 60 * 60 * 1000;
+        const effective = new Date(todayDate.getTime() - offsetMs);
+        return effective.toISOString().split("T")[0];
+      } catch (_) {
+        return t.startDate;
+      }
+    } else {
+      try {
+        const todayDate = new Date(todayStr + "T00:00:00");
+        const offsetMs = checkedCount * 24 * 60 * 60 * 1000;
+        const effective = new Date(todayDate.getTime() - offsetMs);
+        return effective.toISOString().split("T")[0];
+      } catch (_) {
+        return t.startDate;
+      }
+    }
+  };
+
   const calculateTargetDate = (startDateStr: string, duration: number) => {
     try {
       const start = new Date(startDateStr + "T00:00:00");
@@ -768,17 +817,13 @@ export default function App() {
     }
   };
 
-  const calculateElapsedDays = (startDateStr: string, isCompleted: boolean, completedAt?: string) => {
-    try {
-      const start = new Date(startDateStr + "T00:00:00");
-      const end = isCompleted && completedAt ? new Date(completedAt.split("T")[0] + "T00:00:00") : new Date();
-      end.setHours(0,0,0,0);
-      const diffTime = end.getTime() - start.getTime();
-      const elapsed = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
-      return Math.max(1, elapsed);
-    } catch (e) {
-      return 1;
+  const calculateElapsedDays = (t: SmartTracker) => {
+    if (t.isCompleted) {
+      return t.durationDays;
     }
+    const checkIns = t.checkIns || [];
+    const count = checkIns.length;
+    return Math.min(t.durationDays, count + 1);
   };
 
   const handleAddSmartTracker = (e: React.FormEvent) => {
@@ -797,7 +842,8 @@ export default function App() {
       startDate: newTrackerForm.startDate,
       durationDays: Number(newTrackerForm.durationDays) || 1,
       isCompleted: false,
-      notes: newTrackerForm.notes
+      notes: newTrackerForm.notes,
+      checkIns: []
     };
     setState(prev => ({
       ...prev,
@@ -818,14 +864,38 @@ export default function App() {
       showToast("La serra è in sola lettura. Modifiche disabilitate. 🌿");
       return;
     }
+    const todayStr = new Date().toISOString().split("T")[0];
     setState(prev => {
       const updated = (prev.smartTrackers || []).map(t => {
         if (t.id === id) {
-          const isCompleted = !t.isCompleted;
+          const checkIns = t.checkIns ? [...t.checkIns] : [];
+          let isCompleted = t.isCompleted;
+          let completedAt = t.completedAt;
+
+          if (checkIns.includes(todayStr)) {
+            // Rimuovi check-in di oggi (sblocca)
+            const index = checkIns.indexOf(todayStr);
+            if (index > -1) {
+              checkIns.splice(index, 1);
+            }
+            isCompleted = false;
+            completedAt = undefined;
+          } else {
+            // Aggiungi check-in di oggi (ferma e avanza)
+            if (!checkIns.includes(todayStr)) {
+              checkIns.push(todayStr);
+            }
+            if (checkIns.length >= t.durationDays) {
+              isCompleted = true;
+              completedAt = new Date().toISOString();
+            }
+          }
+
           return {
             ...t,
+            checkIns,
             isCompleted,
-            completedAt: isCompleted ? new Date().toISOString() : undefined
+            completedAt
           };
         }
         return t;
@@ -1641,7 +1711,7 @@ export default function App() {
           <div>
             <h1 className="text-xl font-serif italic text-[#2d3a27] font-semibold tracking-tight">Flora — <span className="font-light not-italic text-sage-600">Botanical Archive</span></h1>
             <p className="text-[10px] font-mono tracking-wider uppercase text-sage-500 flex items-center gap-1.5">
-              <span>{state.settings.gardenName} di {state.settings.userName}</span>
+              <span>{state.settings.gardenName.includes(state.settings.userName) ? state.settings.gardenName : `${state.settings.gardenName} di ${state.settings.userName}`}</span>
               <span className={`inline-block w-1.5 h-1.5 rounded-full ${isReadOnlyMode ? "bg-[#d68a56]" : "bg-[#7e8c69] animate-ping"}`} title={isReadOnlyMode ? "Serra in sola lettura" : "Sincronizzato"}></span>
               {isReadOnlyMode ? (
                 <span className="text-[9px] text-amber-700 font-bold">shared view-only</span>
@@ -1913,7 +1983,30 @@ export default function App() {
                     <div className="flex-1 min-w-0 flex flex-col justify-between">
                       <div className="flex justify-between items-start gap-1">
                         <h4 className="text-xs font-bold text-[#2d3a27] truncate tracking-tight">{p.name}</h4>
-                        <span className="text-[9px] font-mono text-sage-400 flex-shrink-0">{ageDays} gg</span>
+                        <div className="flex flex-col items-end flex-shrink-0 gap-0.5">
+                          <span className="text-[9px] font-mono text-sage-400">{ageDays} gg</span>
+                          {(() => {
+                            const plantActivities = (state.activities || []).filter(a => a.plantId === p.id && a.status === "todo");
+                            const pendingCount = plantActivities.length;
+                            if (pendingCount > 0) {
+                              const todayStr = new Date().toISOString().split("T")[0];
+                              const hasUrgent = plantActivities.some(a => a.dueDate <= todayStr);
+                              return (
+                                <span 
+                                  className={`text-[8px] font-mono font-extrabold px-1 py-0.5 rounded flex items-center gap-0.5 transition-all ${
+                                    hasUrgent 
+                                      ? "bg-red-50 text-red-600 border border-red-200 animate-pulse" 
+                                      : "bg-sage-100 text-[#4c5938]"
+                                  }`}
+                                  title={hasUrgent ? "C'è un'attività in scadenza oggi o scaduta!" : "Attività in agenda"}
+                                >
+                                  Agenda: {pendingCount}
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
+                        </div>
                       </div>
                       
                       <p className="text-[11px] text-[#7e8c69] italic font-serif">
@@ -3679,9 +3772,12 @@ export default function App() {
                         </div>
                       ) : (
                         activeTrackersShown.map(t => {
-                          const elapsed = calculateElapsedDays(t.startDate, t.isCompleted, t.completedAt);
-                          const progressPercent = Math.min(100, Math.round((elapsed / t.durationDays) * 100));
-                          const targetDateFormatted = calculateTargetDate(t.startDate, t.durationDays);
+                          const effectiveStartDate = getEffectiveStartDate(t);
+                          const elapsed = calculateElapsedDays(t);
+                          const todayStr = new Date().toISOString().split("T")[0];
+                          const todayChecked = (t.checkIns || []).includes(todayStr);
+                          const progressPercent = Math.min(100, Math.round(((t.checkIns || []).length / t.durationDays) * 100));
+                          const targetDateFormatted = calculateTargetDate(effectiveStartDate, t.durationDays);
 
                           return (
                             <div 
@@ -3704,13 +3800,16 @@ export default function App() {
                                   <div className="flex gap-2">
                                     <button
                                       onClick={() => handleToggleTracker(t.id)}
-                                      className="p-1 hover:bg-[#e7ece5] rounded-xl cursor-pointer text-stone-500 hover:text-emerald-700 transition"
-                                      title={t.isCompleted ? "Segna come in corso" : "Completo"}
+                                      className="p-1 hover:bg-[#e7ece5] rounded-xl cursor-pointer text-[#4c5938] hover:text-emerald-700 transition flex items-center gap-1.5"
+                                      title={t.isCompleted ? "Tracciamento completato!" : todayChecked ? "Dovere già spuntato oggi" : "Spunta dovere di oggi"}
                                     >
-                                      {t.isCompleted ? (
+                                      {t.isCompleted || todayChecked ? (
                                         <CheckSquare className="w-4 h-4 text-emerald-700 font-bold" />
                                       ) : (
                                         <Square className="w-4 h-4 text-stone-400" />
+                                      )}
+                                      {todayChecked && !t.isCompleted && (
+                                        <span className="text-[8px] font-mono font-bold uppercase text-emerald-700 bg-emerald-50 px-1 rounded">fatto</span>
                                       )}
                                     </button>
                                     {!isReadOnlyMode && (
@@ -3754,7 +3853,7 @@ export default function App() {
                                 </div>
 
                                 <div className="flex justify-between items-center pt-1 text-[8px] font-mono text-stone-400 uppercase">
-                                  <span>Inizio: {new Date(t.startDate).toLocaleDateString("it-IT", { day: '2-digit', month: '2-digit' })}</span>
+                                  <span>Inizio: {new Date(effectiveStartDate).toLocaleDateString("it-IT", { day: '2-digit', month: '2-digit' })}</span>
                                   <span className="font-bold text-emerald-800">Cura attiva fin: {targetDateFormatted}</span>
                                 </div>
                               </div>

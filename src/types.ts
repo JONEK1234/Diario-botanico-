@@ -70,6 +70,7 @@ export interface SmartTracker {
   isCompleted: boolean;
   completedAt?: string;
   notes?: string;
+  checkIns?: string[];
 }
 
 export interface JournalState {
