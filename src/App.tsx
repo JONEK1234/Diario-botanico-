@@ -775,29 +775,37 @@ export default function App() {
     showToast("Riposizionata nella serra attiva! 🌿✨");
   };
 
+  const formatLocalDate = (dateStr: string) => {
+    try {
+      const parts = dateStr.split("T")[0].split("-");
+      if (parts.length === 3) {
+        return `${parts[2]}/${parts[1]}`;
+      }
+    } catch (_) {}
+    return dateStr;
+  };
+
   const getEffectiveStartDate = (t: SmartTracker) => {
     const checkIns = t.checkIns || [];
     const todayStr = new Date().toISOString().split("T")[0];
     
-    if (t.isCompleted) {
-      return t.startDate;
+    if (checkIns.length === 0) {
+      return todayStr;
     }
     
-    const pastCheckedCount = checkIns.filter(d => d < todayStr).length;
-    
-    try {
-      const todayDate = new Date(todayStr + "T00:00:00");
-      const offsetMs = pastCheckedCount * 24 * 60 * 60 * 1000;
-      const effective = new Date(todayDate.getTime() - offsetMs);
-      return effective.toISOString().split("T")[0];
-    } catch (_) {
-      return t.startDate;
-    }
+    const sortedCheckIns = [...checkIns].sort();
+    return sortedCheckIns[0];
   };
 
   const calculateTargetDate = (startDateStr: string, duration: number) => {
     try {
-      const start = new Date(startDateStr + "T00:00:00");
+      const parts = startDateStr.split("-");
+      let start: Date;
+      if (parts.length === 3) {
+        start = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 0, 0, 0, 0);
+      } else {
+        start = new Date(startDateStr + "T00:00:00");
+      }
       const target = new Date(start.getTime() + duration * 24 * 60 * 60 * 1000);
       return target.toLocaleDateString("it-IT", { day: "2-digit", month: "long", year: "numeric" });
     } catch (e) {
@@ -3839,7 +3847,7 @@ export default function App() {
                                 </div>
 
                                 <div className="flex justify-between items-center pt-1 text-[8px] font-mono text-stone-400 uppercase">
-                                  <span>Inizio: {new Date(effectiveStartDate).toLocaleDateString("it-IT", { day: '2-digit', month: '2-digit' })}</span>
+                                  <span>Inizio: {formatLocalDate(effectiveStartDate)}</span>
                                   <span className="font-bold text-emerald-800">Cura attiva fin: {targetDateFormatted}</span>
                                 </div>
                               </div>
@@ -4037,7 +4045,7 @@ export default function App() {
                                   <p className="font-bold text-[#2d3a27] font-serif italic text-sm">{t.title}</p>
                                   {t.notes && <p className="text-[10px] text-stone-500 italic whitespace-pre-wrap">"{t.notes}"</p>}
                                   <div className="text-[9px] font-mono text-stone-400 flex items-center gap-2 flex-wrap pt-1">
-                                    <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-md font-bold">Inizio: {new Date(effectiveStartDate).toLocaleDateString("it-IT", { day: '2-digit', month: '2-digit' })}</span>
+                                    <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-md font-bold">Inizio: {formatLocalDate(effectiveStartDate)}</span>
                                     <span className="bg-stone-100 text-stone-600 px-1.5 py-0.5 rounded-md font-bold">Cura attiva fin: {targetDate}</span>
                                   </div>
                                 </div>
