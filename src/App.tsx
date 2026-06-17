@@ -778,32 +778,20 @@ export default function App() {
   const getEffectiveStartDate = (t: SmartTracker) => {
     const checkIns = t.checkIns || [];
     const todayStr = new Date().toISOString().split("T")[0];
-    const checkedCount = checkIns.length;
     
     if (t.isCompleted) {
       return t.startDate;
     }
     
-    const isTodayChecked = checkIns.includes(todayStr);
+    const pastCheckedCount = checkIns.filter(d => d < todayStr).length;
     
-    if (isTodayChecked) {
-      try {
-        const todayDate = new Date(todayStr + "T00:00:00");
-        const offsetMs = (checkedCount - 1) * 24 * 60 * 60 * 1000;
-        const effective = new Date(todayDate.getTime() - offsetMs);
-        return effective.toISOString().split("T")[0];
-      } catch (_) {
-        return t.startDate;
-      }
-    } else {
-      try {
-        const todayDate = new Date(todayStr + "T00:00:00");
-        const offsetMs = checkedCount * 24 * 60 * 60 * 1000;
-        const effective = new Date(todayDate.getTime() - offsetMs);
-        return effective.toISOString().split("T")[0];
-      } catch (_) {
-        return t.startDate;
-      }
+    try {
+      const todayDate = new Date(todayStr + "T00:00:00");
+      const offsetMs = pastCheckedCount * 24 * 60 * 60 * 1000;
+      const effective = new Date(todayDate.getTime() - offsetMs);
+      return effective.toISOString().split("T")[0];
+    } catch (_) {
+      return t.startDate;
     }
   };
 
@@ -822,8 +810,9 @@ export default function App() {
       return t.durationDays;
     }
     const checkIns = t.checkIns || [];
-    const count = checkIns.length;
-    return Math.min(t.durationDays, count + 1);
+    const todayStr = new Date().toISOString().split("T")[0];
+    const pastCheckedCount = checkIns.filter(d => d < todayStr).length;
+    return Math.min(t.durationDays, pastCheckedCount + 1);
   };
 
   const handleAddSmartTracker = (e: React.FormEvent) => {
@@ -3507,13 +3496,9 @@ export default function App() {
           const now = Date.now();
           const thirtyMinutes = 30 * 60 * 1000;
 
-          // Trackers: non completati, oppure completati da meno di 30 minuti
+          // Trackers: non completati (quelli completati si archiviano subito)
           const trackersList = state.smartTrackers || [];
-          const activeTrackersShown = trackersList.filter(t => {
-            if (!t.isCompleted) return true;
-            if (!t.completedAt) return false;
-            return (now - new Date(t.completedAt).getTime()) < thirtyMinutes;
-          });
+          const activeTrackersShown = trackersList.filter(t => !t.isCompleted);
 
           // Filtra attività generiche (globali, dove plantId === "global")
           const globalActivities = state.activities.filter(a => a.plantId === "global");
@@ -3768,7 +3753,7 @@ export default function App() {
                         <div className="col-span-2 text-center py-12 bg-white rounded-3xl border border-stone-200 p-6 text-stone-400 space-y-2">
                           <Activity className="w-8 h-8 mx-auto text-stone-300 stroke-[1.2]" />
                           <p className="text-xs italic">Nessun tracciatore biologico attivo.</p>
-                          <p className="text-[10px] text-stone-500 max-w-sm mx-auto">I tracciatori completati si archiviano automaticamente nello Storico in alto dopo 30 minuti dalla spunta.</p>
+                          <p className="text-[10px] text-stone-500 max-w-sm mx-auto">I tracciatori completati si archiviano immediatamente nello Storico in alto dopo il completamento.</p>
                         </div>
                       ) : (
                         activeTrackersShown.map(t => {
