@@ -40,6 +40,54 @@ async function startServer() {
 
   app.use(express.json({ limit: '10mb' }));
 
+  // --- METADATI PWA (MANIFEST.JSON & SERVICE WORKER) ---
+  app.get("/manifest.json", (req, res) => {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.send({
+      "name": "Flora — Botanical Archive",
+      "short_name": "Flora",
+      "start_url": "/",
+      "display": "standalone",
+      "background_color": "#fbfbf9",
+      "theme_color": "#2d3a27",
+      "orientation": "portrait-primary",
+      "icons": [
+        {
+          "src": "https://img.icons8.com/plant-green/512/empty-bed.png",
+          "sizes": "512x512",
+          "type": "image/png",
+          "purpose": "any maskable"
+        },
+        {
+          "src": "https://img.icons8.com/plant-green/192/empty-bed.png",
+          "sizes": "192x192",
+          "type": "image/png",
+          "purpose": "any"
+        }
+      ]
+    });
+  });
+
+  app.get("/sw.js", (req, res) => {
+    res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+    res.send(`
+      const CACHE_NAME = 'flora-cache-v3';
+      self.addEventListener('install', (event) => {
+        self.skipWaiting();
+      });
+      self.addEventListener('activate', (event) => {
+        event.waitUntil(clients.claim());
+      });
+      self.addEventListener('fetch', (event) => {
+        event.respondWith(
+          fetch(event.request).catch(() => {
+            return caches.match(event.request);
+          })
+        );
+      });
+    `);
+  });
+
   // Middleware CORS per consentire l'accesso sicuro sia da Google AI Studio che da istanze Vercel
   app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -56,7 +104,7 @@ async function startServer() {
     fs.mkdirSync(SHARES_DIR, { recursive: true });
   }
 
-  // API: Salva una condivisione sul server / cloud
+  // API: Salva o aggiorna una condivisione sul server / cloud
   app.post("/api/shares", async (req, res) => {
     try {
       const stateData = req.body;
@@ -64,37 +112,55 @@ async function startServer() {
         return res.status(400).json({ error: "Dati non validi" });
       }
 
-      let shareId = "";
+      let shareId = stateData.id || "";
 
-      // Tentativo 1: Salva nel cloud persistente e veloce di KVDB.io per supportare Vercel
-      try {
-        const bucketRes = await fetch("https://kvdb.io", { method: "POST" });
-        if (bucketRes.ok) {
-          const bucketId = (await bucketRes.text()).trim();
-          if (bucketId && bucketId.length > 5) {
-            const saveRes = await fetch(`https://kvdb.io/${bucketId}/state`, {
+      // Se non abbiamo un ID, proviamo a generarne uno nuovo tramite KVDB.io o locale
+      if (!shareId) {
+        // Tentativo 1: Salva nel cloud persistente e veloce di KVDB.io per supportare Vercel
+        try {
+          const bucketRes = await fetch("https://kvdb.io", { method: "POST" });
+          if (bucketRes.ok) {
+            const bucketId = (await bucketRes.text()).trim();
+            if (bucketId && bucketId.length > 5) {
+              const saveRes = await fetch(`https://kvdb.io/${bucketId}/state`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(stateData)
+              });
+              if (saveRes.ok) {
+                shareId = bucketId;
+              }
+            }
+          }
+        } catch (cloudErr) {
+          console.warn("Errore KVDB cloud, fallback su filesystem locale:", cloudErr);
+        }
+
+        // Fallback: Genera un ID corto locale se il cloud non è utilizzabile ed è la prima volta
+        if (!shareId) {
+          const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+          for (let i = 0; i < 8; i++) {
+            shareId += chars.charAt(Math.floor(Math.random() * chars.length));
+          }
+        }
+      } else {
+        // Se abbiamo già l'ID, proviamo ad aggiornare KVDB.io se è un ID cloud lungo
+        if (shareId.length > 15) {
+          try {
+            await fetch(`https://kvdb.io/${shareId}/state`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(stateData)
             });
-            if (saveRes.ok) {
-              shareId = bucketId;
-            }
+          } catch (cloudErr) {
+            console.warn("Errore aggiornamento KVDB:", cloudErr);
           }
         }
-      } catch (cloudErr) {
-        console.warn("Errore KVDB cloud, fallback su filesystem locale:", cloudErr);
       }
 
-      // Fallback: Salva sul disco locale se il cloud non è disponibile
-      if (!shareId) {
-        const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        for (let i = 0; i < 8; i++) {
-          shareId += chars.charAt(Math.floor(Math.random() * chars.length));
-        }
-        const filePath = path.join(SHARES_DIR, `${shareId}.json`);
-        fs.writeFileSync(filePath, JSON.stringify(stateData, null, 2), "utf-8");
-      }
+      // Salva/sovrascrivi sempre anche localmente per sicurezza e coerenza
+      const filePath = path.join(SHARES_DIR, `${shareId}.json`);
+      fs.writeFileSync(filePath, JSON.stringify(stateData, null, 2), "utf-8");
 
       res.json({ id: shareId });
     } catch (error: any) {

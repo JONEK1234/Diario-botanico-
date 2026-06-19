@@ -69,7 +69,17 @@ export default function App() {
     if (typeof window !== "undefined" && window.location.hash.startsWith("#share=")) {
       try {
         const hashData = window.location.hash.replace("#share=", "");
-        const decoded = decodeURIComponent(atob(hashData));
+        // Decodifica super robusta compatibile UTF-8 per ripristinare correttamente le lettere accentate
+        let decoded = "";
+        try {
+          decoded = decodeURIComponent(escape(atob(hashData)));
+        } catch (_) {
+          try {
+            decoded = decodeURIComponent(atob(hashData));
+          } catch (__) {
+            decoded = atob(hashData);
+          }
+        }
         const parsed = JSON.parse(decoded);
         if (parsed.plants) {
           return {
@@ -199,6 +209,22 @@ export default function App() {
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [generatedShareUrl, setGeneratedShareUrl] = useState("");
   const [isCopiedSuccess, setIsCopiedSuccess] = useState(false);
+
+  // Connection states for Live Synchronization and PWA Installation
+  const [activeShareId, setActiveShareId] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("flora_active_share_id");
+    }
+    return null;
+  });
+  const [pwaPrompt, setPwaPrompt] = useState<any>(null);
+  const [pwaBannerDismissed, setPwaBannerDismissed] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("flora_pwa_dismissed") === "true";
+    }
+    return false;
+  });
+  const [isPwaInstalled, setIsPwaInstalled] = useState(false);
 
   // Stati per Piante Morte e Memoriale
   const [isDeathModalOpen, setIsDeathModalOpen] = useState(false);
@@ -443,6 +469,159 @@ export default function App() {
       localStorage.setItem("flora_is_add_tracker_open", String(isAddTrackerOpen));
     }
   }, [isAddTrackerOpen]);
+
+  // A. PWA Handler: Cattura la richiesta di installazione prima del caricamento sulla homepage
+  useEffect(() => {
+    const handleBeforePrompt = (e: any) => {
+      e.preventDefault();
+      setPwaPrompt(e);
+    };
+    window.addEventListener("beforeinstallprompt", handleBeforePrompt);
+
+    const handleAppInstalled = () => {
+      setIsPwaInstalled(true);
+      setPwaPrompt(null);
+      showToast("Flora installata con successo sullo Schermo! 🌿📱");
+    };
+    window.addEventListener("appinstalled", handleAppInstalled);
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforePrompt);
+      window.removeEventListener("appinstalled", handleAppInstalled);
+    };
+  }, []);
+
+  // B. Owner Auto-Sync: Salva automaticamente in tempo reale qualsiasi modifica apportata dal proprietario
+  useEffect(() => {
+    if (isReadOnlyMode) return;
+    if (!activeShareId) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        const payload = {
+          id: activeShareId,
+          plants: state.plants,
+          activities: state.activities,
+          smartTrackers: state.smartTrackers || [],
+          settings: state.settings,
+          updatedAt: new Date().toISOString()
+        };
+
+        // 1. Salva sul server Express / KVDB
+        try {
+          await fetch(getApiUrl("/api/shares"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+        } catch (serverErr) {
+          console.warn("Express background sync err:", serverErr);
+        }
+
+        // 2. Salva su Firestore
+        try {
+          const { doc, setDoc } = await import("firebase/firestore");
+          const { db } = await import("./firebase");
+          const docRef = doc(db, "shares", activeShareId);
+          await setDoc(docRef, payload, { merge: true });
+        } catch (firestoreErr) {
+          console.warn("Firestore background sync err:", firestoreErr);
+        }
+      } catch (err) {
+        console.error("Errore salvataggio automatico:", err);
+      }
+    }, 2500); // 2.5 secondi di ritardo per non saturare le richieste mentre l'utente compie azioni multiple
+
+    return () => clearTimeout(timer);
+  }, [state, activeShareId, isReadOnlyMode]);
+
+  // C. Viewer Realtime Sync: Riceve e aggiorna in tempo reale la serra visualizzata tramite link condiviso
+  useEffect(() => {
+    if (!isReadOnlyMode) return;
+    let hashRaw = "";
+    if (typeof window !== "undefined") {
+      if (window.location.hash.startsWith("#sharez=")) {
+        hashRaw = window.location.hash.replace("#sharez=", "");
+      } else if (window.location.hash.startsWith("#share=")) {
+        hashRaw = window.location.hash.replace("#share=", "");
+      }
+    }
+    if (!hashRaw || hashRaw.length >= 50) return;
+
+    let activeSync = true;
+    let unsubscribeFirestore: (() => void) | null = null;
+
+    // Sincronizzazione tramite Firebase Firestore (Push istantaneo delle modifiche)
+    const initFirestoreSync = async () => {
+      try {
+        const { doc, onSnapshot } = await import("firebase/firestore");
+        const { db } = await import("./firebase");
+        const docRef = doc(db, "shares", hashRaw);
+        
+        unsubscribeFirestore = onSnapshot(docRef, (docSnap) => {
+          if (!activeSync) return;
+          if (docSnap.exists()) {
+            const parsedData = docSnap.data();
+            if (parsedData && (parsedData.plants || parsedData.activities)) {
+              setState(prev => {
+                // Evita di resettare se non ci sono cambiamenti di sostanza
+                if (JSON.stringify(prev.plants) === JSON.stringify(parsedData.plants) &&
+                    JSON.stringify(prev.activities) === JSON.stringify(parsedData.activities) &&
+                    JSON.stringify(prev.smartTrackers) === JSON.stringify(parsedData.smartTrackers)) {
+                  return prev;
+                }
+                return {
+                  plants: parsedData.plants || [],
+                  activities: parsedData.activities || [],
+                  smartTrackers: parsedData.smartTrackers || [],
+                  settings: parsedData.settings || prev.settings
+                };
+              });
+            }
+          }
+        }, (err) => {
+          console.warn("Firestore live subscriber fallback:", err);
+        });
+      } catch (e) {
+        console.warn("Firestore sync non supportato, uso polling backup.", e);
+      }
+    };
+    initFirestoreSync();
+
+    // Polling periodico su Express Server (Backup se offline o connessione interrotta)
+    const pollInterval = setInterval(async () => {
+      if (!activeSync) return;
+      try {
+        const res = await fetch(getApiUrl(`/api/shares/${hashRaw}`));
+        if (res.ok) {
+          const parsedData = await res.json();
+          if (parsedData && (parsedData.plants || parsedData.activities)) {
+            setState(prev => {
+              if (JSON.stringify(prev.plants) === JSON.stringify(parsedData.plants) &&
+                  JSON.stringify(prev.activities) === JSON.stringify(parsedData.activities) &&
+                  JSON.stringify(prev.smartTrackers) === JSON.stringify(parsedData.smartTrackers)) {
+                return prev;
+              }
+              return {
+                plants: parsedData.plants || [],
+                activities: parsedData.activities || [],
+                smartTrackers: parsedData.smartTrackers || [],
+                settings: parsedData.settings || prev.settings
+              };
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("Polling backup fallito:", err);
+      }
+    }, 5000);
+
+    return () => {
+      activeSync = false;
+      if (unsubscribeFirestore) unsubscribeFirestore();
+      clearInterval(pollInterval);
+    };
+  }, [isReadOnlyMode]);
 
   // Caricamento asincrono per link condivisi (ID server o compressi offline)
   useEffect(() => {
@@ -1631,6 +1810,18 @@ export default function App() {
 
         shareUrl = `${getCanonicalShareBaseUrl()}#sharez=${urlSafeBase64}`;
       }
+
+      // Attivazione immediata del sistema di Sincronizzazione Live per l'autore
+      if (shareUrl) {
+        const match = shareUrl.match(/#sharez=([A-Za-z0-9_\-]+)/);
+        if (match && match[1]) {
+          const activeId = match[1];
+          if (activeId.length < 50) {
+            localStorage.setItem("flora_active_share_id", activeId);
+            setActiveShareId(activeId);
+          }
+        }
+      }
       
       setGeneratedShareUrl(shareUrl);
       setIsShareOpen(true);
@@ -1723,15 +1914,32 @@ export default function App() {
         <div className="flex flex-wrap items-center gap-2">
           {/* Sistema Sincronizzato Live pill */}
           {isReadOnlyMode ? (
-            <div className="bg-[#5a5a40] text-white px-4 py-2 rounded-full text-[11px] font-semibold flex items-center gap-2">
-              <div className="w-1.5 h-1.5 bg-[#b2cfa5] rounded-full"></div>
-              <span>Serra Condivisa (Sola Lettura)</span>
+            <div className="bg-[#5a5a40] text-white px-4 py-2 rounded-full text-[11px] font-semibold flex items-center gap-2 shadow-[0_2px_8px_rgba(90,90,64,0.05)]">
+              <div className="w-1.5 h-1.5 bg-[#b2cfa5] rounded-full animate-pulse"></div>
+              <span>Serra Condivisa (Live)</span>
             </div>
           ) : (
-            <div className="bg-[#7e8c69] text-white px-4 py-2 rounded-full text-[11px] font-semibold flex items-center gap-2">
-              <div className="w-1.5 h-1.5 bg-[#00ff00] rounded-full pulse-botanic"></div>
-              <span>Sistema Sincronizzato Live</span>
+            <div className={`text-white px-4 py-2 rounded-full text-[11px] font-semibold flex items-center gap-2 transition-all shadow-[0_2px_8px_rgba(90,90,64,0.05)] ${activeShareId ? "bg-emerald-750 animate-pulse" : "bg-[#7e8c69]"}`}>
+              <div className={`w-1.5 h-1.5 rounded-full ${activeShareId ? "bg-emerald-300" : "bg-[#00ff00] pulse-botanic"}`}></div>
+              <span>{activeShareId ? "Condividi & Sincronizza (Live)" : "Sistema Sincronizzato Live"}</span>
             </div>
+          )}
+
+          {/* Se l'utente ha la condivisione attiva e desidera spegnerla per privacy */}
+          {activeShareId && !isReadOnlyMode && (
+            <button
+              onClick={() => {
+                if (confirm("Desideri disattivare la sincronizzazione in tempo reale per questo link condiviso? Chi visualizza continuerà a vedere lo stato salvato finora, ma non riceverà più aggiornamenti.")) {
+                  localStorage.removeItem("flora_active_share_id");
+                  setActiveShareId(null);
+                  showToast("Sincronizzazione della condivisione disattivata. 🛑");
+                }
+              }}
+              className="p-1 px-2.5 bg-rose-50 border border-rose-200 hover:bg-rose-100 rounded-full text-rose-700 transition-all cursor-pointer text-[10px] uppercase font-bold flex items-center gap-1 shadow-sm"
+              title="Disattiva sincronizzazione live del link di condivisione"
+            >
+              Spegni Sincronia
+            </button>
           )}
 
           <button
@@ -1785,6 +1993,65 @@ export default function App() {
           )}
         </div>
       </header>
+
+      {/* BANNER INSTALLAZIONE APP (PWA) */}
+      {(!pwaBannerDismissed && !isPwaInstalled && (pwaPrompt || (typeof window !== "undefined" && /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream && !(window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone)))) && (
+        <div id="pwa-install-banner" className="bento-card bg-gradient-to-r from-sage-800 to-[#1e271a] text-white p-5 flex flex-col md:flex-row items-center justify-between gap-4 relative overflow-hidden shadow-lg border border-sage-700/30">
+          <div className="absolute top-0 right-0 p-8 opacity-5 pointer-events-none transform translate-x-4 -translate-y-4">
+            <Sprout className="w-40 h-40 font-bold text-white" />
+          </div>
+          <div className="flex items-start gap-3.5 relative z-10 w-full md:w-auto">
+            <div className="p-3 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center shrink-0">
+              <Sparkles className="w-5 h-5 text-emerald-300 animate-pulse" />
+            </div>
+            <div>
+              <h3 className="font-serif italic text-base font-semibold text-emerald-100 flex items-center gap-1.5">
+                Installa l'App di Flora sul tuo Schermo! 🌿📱
+              </h3>
+              <p className="text-xs text-stone-300 leading-relaxed max-w-xl mt-1">
+                {pwaPrompt ? (
+                  "Aggiungi Flora alla schermata home del tuo telefono per aprirla istantaneamente, a schermo intero e ricevere tutti gli aggiornamenti live in tempo reale!"
+                ) : (
+                  "Tocca il tasto Condividi di Safari (quadrato con freccia verso l'alto) in basso e seleziona 'Aggiungi alla schermata Home' per installare Flora su iPhone!"
+                )}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2.5 relative z-10 self-end md:self-center shrink-0">
+            {pwaPrompt && (
+              <button
+                onClick={() => {
+                  if (pwaPrompt) {
+                    pwaPrompt.prompt();
+                    pwaPrompt.userChoice.then((choiceResult: any) => {
+                      if (choiceResult.outcome === "accepted") {
+                        console.log("L'utente ha accettato l'installazione di Flora.");
+                        setIsPwaInstalled(true);
+                      }
+                      setPwaPrompt(null);
+                    });
+                  }
+                }}
+                id="pwa-btn-install"
+                className="px-4 py-2 bg-[#b2cfa5] hover:bg-[#a1bf94] text-[#1e271a] rounded-full text-xs font-bold transition-all shadow-md cursor-pointer flex items-center gap-1.5"
+              >
+                Aggiungi Schermo
+              </button>
+            )}
+            <button
+              onClick={() => {
+                localStorage.setItem("flora_pwa_dismissed", "true");
+                setPwaBannerDismissed(true);
+              }}
+              id="pwa-btn-dismiss"
+              className="p-2 border border-white/20 hover:bg-white/10 rounded-full text-stone-300 hover:text-white transition-all cursor-pointer"
+              title="Nascondi avviso"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* DASHBOARD BAR - METRICHE FLUIDE */}
       <section className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
