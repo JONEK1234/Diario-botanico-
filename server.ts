@@ -6,6 +6,7 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import zlib from "zlib";
 import { GoogleGenAI } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import * as esbuild from "esbuild";
@@ -209,14 +210,87 @@ async function startServer() {
   const ICON_192_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAMAAABbTLDUAAAAXVBMVEV/v98AAAB/u98/ut9/vt8AAAB/ut8/u9////////////////////////////////////////////////////////////////////////////////////////////8/u98At9+6AAAAG3RSTlMAEc/vEQGf0f/P7xD//////8////////////////+QfW3hAAAB3ElEQVR42uzayW7bQAwF0OIsKZaW+v9/diUpkiCgG9g9F8D7orvGidIHAQAAAAAAAAAAAAAAAAAAAAAAAAAAAIDP8+p2D08W3Z977tX7pL51jT8+fP6j8v699U13Fvf3X/T32uN7f/56/+W4fW/fH69m+Xvj6bY7x/PjH6p8vffl/vWjX7Z7L/Xq9vT4z+YdY/P8r8qP++VpX+vVbXfsX7unp9vT8uP+y6vL0t/P5/On2+7p8b9VvtzWPlen0fS1S3e65Y6X++U0mBv77vaxC/vF9C66+b663cPT77Z7etx/ef999+W47Y5Zfv7f43b7Of7rV/m8/O/x1N/F09fXpW97X6vun66Obe656WfXt7bnX3Z9a3uUfNl1p8nK1y665S7fL0vXnXbvpdvT7XzpZf66pX13L/MyWf66pX1Z9kv7/X3f+fKvy/17M/bK/TfjtTtmXp4er13S++6f990/9z9etvunXerVbfep990v2+3+b/vvl/v3UuW4f9vVrfZz/Ncu/Wv85+/i6X9f257+S/vS/t/j/vX790v7Z7+uNCPun+65y+vFv07Ofbndw9PvvH96unfL0Uv6f8f7Hzfbtp/n/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgE/0C+k1MwrM9QoSAAAAAElFTkSuQmCC";
   const ICON_512_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAgAAAAIACAMAAADD3CgWAAAAZlBMVEV/v98AAAB/u98At98AAAD///8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/ut9/vt/Xb5p1AAAAI3RSTlMAM8///88RAQD/////////////////////////////////////0NAnHwAADphSURBVHic7d1rluMoDAVQFZAsmff+ZxwGg427re5C1ZDoD3g9P5p2y9RGohoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADgC3Z/fOndVb+/feR7/7D7v6G97t++45f65R1+U0Pf1F68y/s7/7PbeY/3fT+6bZcfYp/u9936/k9p/6ntPrvTbb86fe9+u9Pt/nZfe0m3p9t+X/p+26/W59v+S5/udPv96bTdp+3+pdt+9Tj/rU/bX6XPP6V97vOfvH6un7/pY9q/9fGdfv/4vXfb73f7v97HPrXv/bW6pNs/pNuPbe6X+/iXP/v6p3R7vt9H39Vev9dfvtd/U/unvfyUvnZPt/36P/pLt/1v+Xf76ePtP33P9N93H/vcp//v0vepzzWk7enVv6T96+v08Tf1fXWfNvyWfv+7//pfe0m35/76+fG7bN3n9v6bvv/+L90/P9eXf/Vf/tf+b33+U9pLur2kp9u/v8/H73f7/U9p/3p7fE762mPrp3T/vO97TffXqXv3p9vXpPbp6ZaP9C9t++N6u/9OenxfH/PjV8fPl77vTve19W0/p/vHeqS+fvzx9U992sc2ffzVv/v609fO6Xa//296Sbd96X3u6+u/vH6O36df+pD2/Mfe5+nre+rTx99Uf/X/Otbv8vHH+/6U9rVPef7y9Ev97b/030nb9Oof7j/dv9cfU9/vPv673n/6ffXvv09p//I+tv987q9v/0e3/dD//Pj318+/3uN7/Tj9ffH9b/3X8Srf46XvP3Yvff+xj/m4766pP3703enrn/p4Of7bU9pH+r48f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/Tf95qff9/+b099fC0N7E6fU/+W9vFrTz95p6X3b3tJ/+fHzw8fUnXvx6u89/Q//bGPXf99p9vUpzq+706f9O8/bfe+v3ZPPX30scdP+7SvvUrbtOdt2vu+/u0m7Xve9uP0eU+9T8mPrn+ke6/+OqVfv3t992lqX7vUfvdTnzXdf373bXvs6evrdPrt7h7pUzo39v7p7ulX/+HpfTbtY9eU/s3T08vsc5v++q7T/+fUz0vfxz6lnx9Pf0/bL/Xvj9Onf9Nn7b973V93H/f760P/9Wl6qZ8//e6nP7qO76ffqf7823f9vPT9f/P3sfsunT7SPh/pU9r3/Tf97y79e3rM+6+X9P779LH+O93G0vdR+/Spv/vrPv3Z49tUXt9OfZ+u7WvfZ/ev9OfUfv7W+pX6r+XU+1faZ0rb2PrXmbb7v6RPWv9T38+kfe9T+mP/sS99Oqf6b/r/ff7973vffrrufv9jN+X6/tL0fU+f5Onv2T/WrvfLny7d/+6X+reXeXz7Pvv6Svef9v6+j199eOfe97mPt7epfV9PH0+fvqY++07p9pL/Pva9unf3ffr9dfvT+/S1/bFPaXufnvP37nNfU3fvt7fdf31bT/vYpzT98fXxVfq+/vO97Wf/0z+bM8/vm1P/9NTrS4997vP6Vfp0X6m/+tLXPve9u9Tf/6Pbt7fUv/rS/Wv9e/uYfvsf/WunL2+Xvnv9U9rXfv2vYfeZ+3xL03/pOf3XN/72/75M/W+X7k9p3/fpx5W+r1/pfbp/bKfeP7uPpfT/e3p/+p6+T2W6dNuUuvv6un3atv09fZP7tNvv27/pD87Uv3vtf+y/9b27pH7pd5f+7t9f/1zvv5K+T6Xv66fvt/Zp7bWnv6f9Z7f/+pfa6V9D3K83p/9W99Nf/c6f7vvYp7v09W9veunTbe97H7ve9XpM+63038eub38e6fa1n/6Z99PHrvRf66dHe/rpX6dfSfdNfe0m9W7fO31Mpe9TX2v6uF9f/9R9/61vL+37e9un/v773Pby0VdqW/8+bevv8T6uT9uX+rf/Y9v09Zfe59v045f+2W/rfdrW+6x++/Q9X6X2bf8m3b/+W3vqfb6/v3afy9fX51m/T6Wur+/t6dP3T/f/PteSfv3aL399Tvr6pf8tX+nntPvXdf/T0j9TvvvS+mZPfUv9b/6O/+XUfaXf9/7+9X+X76v+8u8vffyx26++p/83efrre+nXf7unW/8+1/Fvv0/tfb//aR9P+9g7dZv+X39M/S936T7SbfW99OuuOf3Wpva9fe+pfemz+7Y73XbpY7dJ//66b/e6Pff6ff9N95/2bfrTpx8ff8ffr6f96q89vTxd89M9vdf/2W+Z/VfKdf8tf/Ue/Uvt+T6/ttvX/eX/f6T7Z2vv86X7tN+6Un9/O/Xxv9+vX78f7737eF+6vI/tt36rffrf7ZfaZ7qPfe+ZPrbvfa/+un22d+pf++6/+4b7bT99vH2kff6mj2mft3R7Sfe937W/u6avXf8etb6Xfr9P23qfX8bHf/9bWv99zMf7a9v0qfTvP/b9fT++6e7Tx7/22f0pfd/+u9P929b/+C+lf8v7W5raP/Ylffxtb/L+/tP+O+l/ve7TbeX+K+mX/eMttff5W2ov6f9Kff9L/0u+/48/vX/fe0rtU/3Unn96bH3s9Xf7/b/+fepbeu7bX9fS+/S1T7++pT++SvvX9023XWrvvt8+3/59/j77XkPb67//Z/XpfUrfsf0f6/+b3m/vX6l9p9unSbc9dfX6vvp/yvtfurbe6XG932r/T/899bV9/O+X9D3Tv6f+9T+fS3f/2X/t9n8XmKQAwP8+v7QFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAF/yZ/IfeAgDf57e1m7gAAIDf6E8pAIB/A/mX+zWQAAB+I/U3118CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHifBwAAAIAP/gAAVgCgO4T/oQAAAABJRU5ErkJggg==";
 
+  // --- INIZIO ENGINERIA DYNAMIC PNG ---
+  const crcTable = new Int32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) {
+      c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    }
+    crcTable[n] = c;
+  }
+
+  function calculateCrc(type: string, data: Buffer): number {
+    const typeBuf = Buffer.from(type, "ascii");
+    const fullBuf = Buffer.concat([typeBuf, data]);
+    let c = ~0;
+    for (let i = 0; i < fullBuf.length; i++) {
+      c = crcTable[(c ^ fullBuf[i]) & 0xff] ^ (c >>> 8);
+    }
+    return ~c;
+  }
+
+  function createPng(width: number, height: number, r: number, g: number, b: number): Buffer {
+    const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+    const ihdrData = Buffer.alloc(13);
+    ihdrData.writeUInt32BE(width, 0);
+    ihdrData.writeUInt32BE(height, 4);
+    ihdrData[8] = 8;
+    ihdrData[9] = 6;
+    ihdrData[10] = 0;
+    ihdrData[11] = 0;
+    ihdrData[12] = 0;
+
+    const ihdrLength = Buffer.alloc(4);
+    ihdrLength.writeUInt32BE(13, 0);
+    const ihdrCrc = Buffer.alloc(4);
+    ihdrCrc.writeInt32BE(calculateCrc("IHDR", ihdrData), 0);
+
+    const ihdrChunk = Buffer.concat([ihdrLength, Buffer.from("IHDR", "ascii"), ihdrData, ihdrCrc]);
+
+    const scanlineLength = width * 4 + 1;
+    const rawData = Buffer.alloc(scanlineLength * height);
+
+    for (let y = 0; y < height; y++) {
+      const rowOffset = y * scanlineLength;
+      rawData[rowOffset] = 0;
+      for (let x = 0; x < width; x++) {
+        const pixelOffset = rowOffset + 1 + x * 4;
+        rawData[pixelOffset] = r;
+        rawData[pixelOffset + 1] = g;
+        rawData[pixelOffset + 2] = b;
+        rawData[pixelOffset + 3] = 255;
+      }
+    }
+
+    const compressed = zlib.deflateSync(rawData);
+
+    const idatLength = Buffer.alloc(4);
+    idatLength.writeUInt32BE(compressed.length, 0);
+    const idatCrc = Buffer.alloc(4);
+    idatCrc.writeInt32BE(calculateCrc("IDAT", compressed), 0);
+
+    const idatChunk = Buffer.concat([idatLength, Buffer.from("IDAT", "ascii"), compressed, idatCrc]);
+
+    const iendChunk = Buffer.from([
+      0x00, 0x00, 0x00, 0x00,
+      0x49, 0x45, 0x4e, 0x44,
+      0xae, 0x42, 0x60, 0x82
+    ]);
+
+    return Buffer.concat([signature, ihdrChunk, idatChunk, iendChunk]);
+  }
+  // --- FINE ENGINERIA DYNAMIC PNG ---
+
   app.get("/icon-192.png", (req, res) => {
     res.setHeader("Content-Type", "image/png");
-    res.send(Buffer.from(ICON_192_PNG_BASE64, 'base64'));
+    res.send(createPng(192, 192, 45, 58, 39));
   });
 
   app.get("/icon-512.png", (req, res) => {
     res.setHeader("Content-Type", "image/png");
-    res.send(Buffer.from(ICON_512_PNG_BASE64, 'base64'));
+    res.send(createPng(512, 512, 45, 58, 39));
   });
 
 
