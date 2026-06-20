@@ -45,12 +45,13 @@ async function startServer() {
   app.get("/manifest.json", (req, res) => {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.send({
+      "id": "/",
       "name": "Flora — Botanical Archive",
       "short_name": "Flora",
       "description": "Archivio botanico interattivo e custode della tua serra digitale offline e in tempo reale.",
       "start_url": "/",
       "display": "standalone",
-      "background_color": "#fbfbf9",
+      "background_color": "#2d3a27",
       "theme_color": "#2d3a27",
       "orientation": "portrait-primary",
       "categories": ["utilities", "lifestyle"],
@@ -68,10 +69,22 @@ async function startServer() {
           "purpose": "any"
         },
         {
+          "src": "/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png",
+          "purpose": "maskable"
+        },
+        {
           "src": "/icon-512.png",
           "sizes": "512x512",
           "type": "image/png",
-          "purpose": "any maskable"
+          "purpose": "any"
+        },
+        {
+          "src": "/icon-512.png",
+          "sizes": "512x512",
+          "type": "image/png",
+          "purpose": "maskable"
         }
       ]
     });
@@ -257,9 +270,57 @@ async function startServer() {
       rawData[rowOffset] = 0;
       for (let x = 0; x < width; x++) {
         const pixelOffset = rowOffset + 1 + x * 4;
-        rawData[pixelOffset] = r;
-        rawData[pixelOffset + 1] = g;
-        rawData[pixelOffset + 2] = b;
+        
+        let pr = r;
+        let pg = g;
+        let pb = b;
+        
+        // Disegniamo un cerchio interno dorato sottile
+        const cx = width / 2;
+        const cy = height / 2;
+        const dist = Math.sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
+        const r_golden = width * 0.43;
+        
+        if (Math.abs(dist - r_golden) < 3.5) {
+          // Bordo aureo
+          pr = 227;
+          pg = 204;
+          pb = 154;
+        } else if (dist < r_golden) {
+          // All'interno del cerchio dorato, disegniamo un germoglio pixel art a forma di pianta!
+          const rx = Math.round((x - cx) / (width / 32));
+          const ry = Math.round((y - cy) / (height / 32));
+          
+          // Pixel-art del germoglio/foglia
+          // Vaso: ry da 6 a 11, rx
+          if (ry >= 5 && ry <= 9 && Math.abs(rx) <= (7 - (ry - 5)/2)) {
+            // Colore vaso terracotta
+            pr = 189;
+            pg = 92;
+            pb = 46;
+          } else if (ry === 4 && Math.abs(rx) <= 6) {
+            // Bordo vaso terracotta chiaro
+            pr = 224;
+            pg = 122;
+            pb = 68;
+          } else if (ry < 4 && ry >= -10) {
+            const isStem = (rx === 0 || rx === -1) && ry < 4 && ry >= -7;
+            const isLeftLeaf = (rx < 0 && ry < 0 && (rx - ry === 1 || rx - ry === 2 || rx - ry === 0 || rx === ry - 2));
+            const isRightLeaf = (rx > 0 && ry < 0 && (rx + ry === -1 || rx + ry === -2 || rx + ry === 0 || rx === -ry - 2));
+            const isBud = ry < -6 && ry >= -10 && Math.abs(rx) <= (ry + 10);
+            
+            if (isStem || isLeftLeaf || isRightLeaf || isBud) {
+              // Verde smeraldo brillante
+              pr = 139;
+              pg = 195;
+              pb = 74;
+            }
+          }
+        }
+        
+        rawData[pixelOffset] = pr;
+        rawData[pixelOffset + 1] = pg;
+        rawData[pixelOffset + 2] = pb;
         rawData[pixelOffset + 3] = 255;
       }
     }
