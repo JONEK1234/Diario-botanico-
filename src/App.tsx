@@ -37,8 +37,7 @@ import {
   Skull,
   HeartOff,
   ArrowLeft,
-  History,
-  Smartphone
+  History
 } from "lucide-react";
 import { JournalState, Plant, CareActivity, PlantStatus, PlantOrigin, DiaryEntry, SmartTracker } from "./types";
 import { PRESET_PLANTS, PRESET_ACTIVITIES } from "./data/presetPlants";
@@ -55,6 +54,9 @@ const getApiUrl = (endpoint: string): string => {
 };
 
 export default function App() {
+  // Modalità Sola Lettura per link condivisi (#share= o #sharez=)
+  const isReadOnlyMode = typeof window !== "undefined" && (window.location.hash.includes("share=") || window.location.hash.includes("sharez="));
+
   // 1. CARICAMENTO STATO INIZIALE (Supporto Standalone Offline ed State Management locale)
   const getInitialState = (): JournalState => {
     // Controlla se ci sono dati iniettati dal compilatore standalone
@@ -160,8 +162,24 @@ export default function App() {
     };
   };
 
-  const [state, setState] = useState<JournalState>(getInitialState);
+  const [state, setState] = useState<JournalState>(() => {
+    if (isReadOnlyMode) {
+      return {
+        plants: [],
+        activities: [],
+        smartTrackers: [],
+        settings: {
+          userName: "Ospite",
+          gardenName: "Giardino Condiviso",
+          offlineMode: false,
+        }
+      };
+    }
+    return getInitialState();
+  });
+
   const [selectedPlantId, setSelectedPlantId] = useState<string>(() => {
+    if (isReadOnlyMode) return "";
     const savedId = typeof window !== "undefined" ? localStorage.getItem("flora_selected_plant_id") : null;
     const initialDb = getInitialState();
     if (savedId && initialDb.plants.some(p => p.id === savedId)) {
@@ -225,13 +243,7 @@ export default function App() {
     }
     return false;
   });
-  const [isPwaInstalled, setIsPwaInstalled] = useState<boolean>(() => {
-    if (typeof window !== "undefined") {
-      return window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true;
-    }
-    return false;
-  });
-  const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
+  const [isPwaInstalled, setIsPwaInstalled] = useState(false);
 
   // Stati per Piante Morte e Memoriale
   const [isDeathModalOpen, setIsDeathModalOpen] = useState(false);
@@ -289,8 +301,114 @@ export default function App() {
     };
   });
 
-  // Modalità Sola Lettura per link condivisi (#share= o #sharez=)
-  const isReadOnlyMode = typeof window !== "undefined" && (window.location.hash.includes("share=") || window.location.hash.includes("sharez="));
+  // Menù degli aggiornamenti all'inizio per i link condivisi (modalità sola lettura)
+  const [showUpdatesMenu, setShowUpdatesMenu] = useState(() => {
+    return isReadOnlyMode;
+  });
+
+  // Tracciamo se abbiamo già catturato lo stato del giardino al primissimo caricamento o sincronizzazione
+  const isInitialCapturedRef = useRef(false);
+
+  // Salviamo in localStorage gli ID visti per non mostrarli di nuovo (modalità sola lettura)
+  const [seenUpdates, setSeenUpdates] = useState<{ plantIds: string[], diaryIds: string[], activityIds: string[] }>(() => {
+    try {
+      const saved = localStorage.getItem("flora_seen_updates_v2");
+      if (saved) return JSON.parse(saved);
+    } catch (_) {}
+    return { plantIds: [], diaryIds: [], activityIds: [] };
+  });
+
+  // Cattura e imposta come già visti tutti gli ID storici presenti al primissimo caricamento per mostrare inizialmente "Nessun aggiornamento"
+  const captureInitialSeenIds = (plants: Plant[], activities: CareActivity[]) => {
+    if (isInitialCapturedRef.current) return;
+    isInitialCapturedRef.current = true;
+
+    const plantIds = (plants || []).map(p => p.id);
+    const diaryIds: string[] = [];
+    (plants || []).forEach(p => {
+      if (p.diary) {
+        p.diary.forEach(d => diaryIds.push(d.id));
+      }
+    });
+    const activityIds = (activities || []).map(a => a.id);
+
+    const mergedSeen = {
+      plantIds,
+      diaryIds,
+      activityIds
+    };
+
+    setSeenUpdates(mergedSeen);
+    try {
+      localStorage.setItem("flora_seen_updates_v2", JSON.stringify(mergedSeen));
+    } catch (_) {}
+  };
+
+  // Mostra solo le NUOVE piante aggiunte e non quelle precedenti già contrassegnate come lette
+  const getNewPlants = () => {
+    if (!state.plants) return [];
+    const active = state.plants.filter(p => !p.isDead);
+    return active.filter(p => !seenUpdates.plantIds.includes(p.id));
+  };
+
+  // Mostra solo le NUOVE diari e modifiche non ancora visualizzate
+  const getNewUpdates = () => {
+    if (!state.plants) return [];
+    const allEntries: { plant: Plant; entry: DiaryEntry }[] = [];
+    state.plants.forEach(p => {
+      if (p.diary && !p.isDead) {
+        p.diary.forEach(d => {
+          allEntries.push({ plant: p, entry: d });
+        });
+      }
+    });
+    const filtered = allEntries.filter(({ entry }) => !seenUpdates.diaryIds.includes(entry.id));
+    // Ordiniamo per data decrescente
+    filtered.sort((a, b) => {
+      const dateA = new Date(a.entry.date).getTime();
+      const dateB = new Date(b.entry.date).getTime();
+      return dateB - dateA;
+    });
+    return filtered;
+  };
+
+  // Mostra solo i NUOVI impegni non ancora visualizzati
+  const getNewPendingActivities = () => {
+    if (!state.activities) return [];
+    const todos = state.activities.filter(a => a.status === "todo");
+    const filtered = todos.filter(a => !seenUpdates.activityIds.includes(a.id));
+    // Ordiniamo per scadenza imminente
+    filtered.sort((a, b) => {
+      const dateA = new Date(a.dueDate).getTime();
+      const dateB = new Date(b.dueDate).getTime();
+      return dateA - dateB;
+    });
+    return filtered;
+  };
+
+  const handleMarkUpdatesAsSeen = () => {
+    const currentPlantIds = (state.plants || []).map(p => p.id);
+    const currentDiaryIds: string[] = [];
+    (state.plants || []).forEach(p => {
+      if (p.diary) {
+        p.diary.forEach(d => currentDiaryIds.push(d.id));
+      }
+    });
+    const currentActivityIds = (state.activities || []).map(a => a.id);
+
+    const updatedSeen = {
+      plantIds: Array.from(new Set([...seenUpdates.plantIds, ...currentPlantIds])),
+      diaryIds: Array.from(new Set([...seenUpdates.diaryIds, ...currentDiaryIds])),
+      activityIds: Array.from(new Set([...seenUpdates.activityIds, ...currentActivityIds]))
+    };
+
+    setSeenUpdates(updatedSeen);
+    try {
+      localStorage.setItem("flora_seen_updates_v2", JSON.stringify(updatedSeen));
+    } catch (_) {}
+
+    setShowUpdatesMenu(false);
+  };
 
   // Riferimenti per Auto-Scroll Smooth
   const detailsSectionRef = useRef<HTMLDivElement>(null);
@@ -570,6 +688,9 @@ export default function App() {
           if (docSnap.exists()) {
             const parsedData = docSnap.data();
             if (parsedData && (parsedData.plants || parsedData.activities)) {
+              // Memorizza lo stato iniziale in sola lettura per considerare tutto come già letto all'inizio
+              captureInitialSeenIds(parsedData.plants || [], parsedData.activities || []);
+              
               setState(prev => {
                 // Evita di resettare se non ci sono cambiamenti di sostanza
                 if (JSON.stringify(prev.plants) === JSON.stringify(parsedData.plants) &&
@@ -603,6 +724,9 @@ export default function App() {
         if (res.ok) {
           const parsedData = await res.json();
           if (parsedData && (parsedData.plants || parsedData.activities)) {
+            // Memorizza lo stato iniziale in sola lettura per considerare tutto come già letto all'inizio
+            captureInitialSeenIds(parsedData.plants || [], parsedData.activities || []);
+
             setState(prev => {
               if (JSON.stringify(prev.plants) === JSON.stringify(parsedData.plants) &&
                   JSON.stringify(prev.activities) === JSON.stringify(parsedData.activities) &&
@@ -679,6 +803,9 @@ export default function App() {
             }
 
             if (parsedData && typeof parsedData === "object" && (Array.isArray(parsedData.plants) || parsedData.plants)) {
+              // Memorizza lo stato iniziale in sola lettura per considerare tutto come già letto all'inizio
+              captureInitialSeenIds(parsedData.plants || [], parsedData.activities || []);
+
               setState({
                 plants: parsedData.plants || [],
                 activities: parsedData.activities || [],
@@ -1854,27 +1981,6 @@ export default function App() {
     }
   };
 
-  // Funzione per gestire l'inizio dell'installazione dell'applicazione (PWA)
-  const handleInstallClick = () => {
-    if (isPwaInstalled) {
-      showToast("Flora è già installata sullo Schermo ed è pronta offline! 🌿📱");
-      return;
-    }
-    if (pwaPrompt) {
-      pwaPrompt.prompt();
-      pwaPrompt.userChoice.then((choiceResult: any) => {
-        if (choiceResult.outcome === "accepted") {
-          console.log("L'utente ha accettato l'installazione di Flora.");
-          setIsPwaInstalled(true);
-          showToast("Flora installata con successo sullo Schermo! 🌿📱");
-        }
-        setPwaPrompt(null);
-      });
-    } else {
-      setIsInstallModalOpen(true);
-    }
-  };
-
   // Ripristina Orto e Ricarica presets
   const handleResetOrto = () => {
     if (confirm("Attenzione: questo azzererà tutte le modifiche e le foto tornando alle piante originarie di default. Procedere?")) {
@@ -1918,103 +2024,287 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col font-sans select-none overflow-x-hidden antialiased text-[#2d3a27] bg-[#f5f5f0] p-4 lg:p-6 gap-6">
       
+      <AnimatePresence>
+        {isReadOnlyMode && showUpdatesMenu && (() => {
+          const newPlants = getNewPlants();
+          const newUpdates = getNewUpdates();
+          const newActivities = getNewPendingActivities();
+          const hasNewUpdates = newPlants.length > 0 || newUpdates.length > 0 || newActivities.length > 0;
+
+          return (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100] bg-[#1e271a]/55 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto"
+            >
+              <motion.div
+                initial={{ scale: 0.95, y: 15 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.95, y: 15 }}
+                className="w-full max-w-4xl bg-[#fdfdfb] border-2 border-[#e2e2d8] rounded-[24px] shadow-2xl p-6 md:p-8 flex flex-col gap-6 my-8 max-h-[90vh] overflow-y-auto"
+              >
+                {/* HEADER DEL MENU */}
+                <div className="flex flex-col gap-2 border-b border-[#e2e2d8] pb-5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[#2d3a27] bg-[#b2cfa5]/35 px-3 py-1 rounded-full text-[10px] font-bold tracking-wider uppercase flex items-center gap-1">
+                      <Sparkles className="w-3 h-3 text-[#2d3a27] animate-pulse" />
+                      Menù degli Aggiornamenti d'Ingresso
+                    </span>
+                  </div>
+                  <h2 className="text-2xl md:text-3xl font-serif italic text-[#2d3a27] font-semibold tracking-tight">
+                    Novità nell'Orto Botanico
+                  </h2>
+                  <p className="text-xs text-sage-600 leading-relaxed max-w-2xl">
+                    Benvenuto! Questa è la vista in tempo reale della serra condivisa di <strong>{state.settings.userName}</strong>. Di seguito trovi solo i nuovi contenuti inseriti o modificati dalla tua ultima visita.
+                  </p>
+                </div>
+
+                {/* BENTO GRID DEGLI AGGIORNAMENTI (Se ce ne sono di nuovi) */}
+                {hasNewUpdates ? (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    
+                    {/* 1. SEZIONE NUOVE PIANTE CON PROVENIENZA ED ORIGINE COMPLETA */}
+                    <div className="bg-white border border-[#e2e2d8] p-5 rounded-2xl flex flex-col gap-4 shadow-sm">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-[#2d3a27]/80 flex items-center gap-2 border-b border-stone-100 pb-2">
+                        <Sprout className="w-4 h-4 text-[#7e8c69]" />
+                        Nuove Piante Aggiunte
+                      </h3>
+                      
+                      <div className="flex flex-col gap-3 overflow-y-auto pr-1">
+                        {newPlants.length > 0 ? (
+                          newPlants.map(p => (
+                            <div key={p.id} className="flex items-center gap-3 p-2 hover:bg-stone-50 rounded-xl transition-all">
+                              <img
+                                src={p.imageUrl}
+                                alt={p.nickname}
+                                referrerPolicy="no-referrer"
+                                className="w-10 h-10 rounded-full object-cover border border-[#e2e2d8] shrink-0"
+                              />
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs font-semibold text-stone-900 truncate">
+                                  {p.nickname}
+                                </p>
+                                <p className="text-[10px] text-stone-500 truncate italic">
+                                  {p.species}
+                                </p>
+                              </div>
+                          
+                              <span className="text-[9px] px-2 py-0.5 rounded-full bg-sage-50 text-sage-700 font-mono font-bold shrink-0">
+                                {p.origin}
+                              </span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-center py-6 text-stone-400 text-xs italic">
+                            Nessun nuovo eroe aggiunto di recente.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 2. CRONOLOGIA NOTE DI DIARIO RECENTI (QUALE PIANTA E' STATA MODIFICATA) */}
+                    <div className="bg-white border border-[#e2e2d8] p-5 rounded-2xl flex flex-col gap-4 shadow-sm md:col-span-2">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-[#2d3a27]/80 flex items-center gap-2 border-b border-stone-100 pb-2">
+                        <History className="w-4 h-4 text-[#d68a56]" />
+                        Nuove Note & Piante Modificate
+                      </h3>
+
+                      <div className="flex flex-col gap-3 overflow-y-auto pr-1">
+                        {newUpdates.length > 0 ? (
+                          newUpdates.map(({ plant, entry }) => (
+                            <div key={entry.id} className="p-3 bg-stone-50/60 rounded-xl border border-stone-100 flex flex-col gap-1.5 hover:bg-stone-50 transition-all">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs font-bold text-[#2d3a27] flex items-center gap-1 hover:underline cursor-pointer" onClick={() => {
+                                  setSelectedPlantId(plant.id);
+                                  handleMarkUpdatesAsSeen();
+                                }}>
+                                  🌱 {plant.nickname}
+                                </span>
+                                <span className="text-[10px] text-stone-400 font-mono shrink-0">
+                                  {new Date(entry.date).toLocaleDateString("it-IT", { day: "2-digit", month: "2-digit" })}
+                                </span>
+                              </div>
+                              
+                              <div className="pl-4 border-l-2 border-[#b2cfa5]">
+                                <p className="text-xs font-semibold text-stone-800">
+                                  {entry.eventTitle}
+                                </p>
+                                <p className="text-xs text-stone-600 line-clamp-2 mt-0.5 whitespace-pre-wrap leading-relaxed">
+                                  {entry.notes}
+                                </p>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-center py-10 text-stone-400 text-xs italic">
+                            Nessuna recente modifica o nota aggiunta.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 3. COSE NUOVE SCRITTE SULLE AGENDE / COMPITI PIANIFICATI */}
+                    <div className="bg-white border border-[#e2e2d8] p-5 rounded-2xl flex flex-col gap-4 shadow-sm md:col-span-3">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-[#2d3a27]/80 flex items-center gap-2 border-b border-stone-100 pb-2">
+                        <CalendarClock className="w-4 h-4 text-[#758461]" />
+                        Nuovi Impegni in Agenda & Culti
+                      </h3>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        {newActivities.length > 0 ? (
+                          newActivities.map(act => {
+                            const relPlant = state.plants.find(p => p.id === act.plantId);
+                            const priorityColors = {
+                              bassa: "bg-stone-100 text-stone-600",
+                              media: "bg-amber-50 text-amber-700",
+                              alta: "bg-rose-50 text-rose-700"
+                            };
+                            return (
+                              <div key={act.id} className="p-3 bg-stone-50/40 rounded-xl border border-stone-100 flex flex-col justify-between gap-2 hover:bg-stone-50/70 transition-all">
+                                <div>
+                                  <div className="flex items-center justify-between gap-2 mb-1">
+                                    <span className="text-[10px] font-mono text-stone-400 uppercase">
+                                      {act.type}
+                                    </span>
+                                    <span className={`text-[9px] px-1.5 py-0.5 font-bold rounded-full uppercase ${priorityColors[act.priority]}`}>
+                                      {act.priority}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs font-semibold text-stone-800 line-clamp-2">
+                                    {act.title}
+                                  </p>
+                                  {relPlant && (
+                                    <p className="text-[10px] text-sage-600 mt-1">
+                                      Destinato a: <strong>{relPlant.nickname}</strong>
+                                    </p>
+                                  )}
+                                </div>
+
+                                <span className="text-[10px] font-mono text-emerald-800 font-bold bg-emerald-50/60 p-1 rounded text-center block mt-1">
+                                  Scade il: {new Date(act.dueDate).toLocaleDateString("it-IT", { day: "2-digit", month: "short" })}
+                                </span>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div className="col-span-3 text-center py-6 text-stone-400 text-xs italic">
+                            Nessun nuovo compito o culto pianificato nell'agenda.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                  </div>
+                ) : (
+                  /* SCHERMATA QUANDO TUTTE LE COSE SONO UGUALI (NESSUNA MODIFICA) */
+                  <div className="flex flex-col items-center justify-center py-16 px-6 gap-5 bg-stone-50/55 border border-[#e2e2d8] rounded-[20px] text-center">
+                    <div className="w-16 h-16 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-700 shadow-sm">
+                      <Check className="w-8 h-8 stroke-[3]" />
+                    </div>
+                    <div className="flex flex-col gap-2 max-w-lg">
+                      <h3 className="text-xl font-serif italic text-[#2d3a27] font-semibold">
+                        Niente è stato modificato, niente è stato aggiornato
+                      </h3>
+                      <p className="text-xs text-stone-500 leading-relaxed">
+                        Tutto è identico all'ultima volta che lo hai controllato. Non ci sono nuove note sul diario, nuove piante aggiunte o nuovi impegni inseriti in agenda dall'ultimo accesso. 🌱
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* BOTTONE CHIUSURA / ATTIVAZIONE VISUALIZZAZIONE COMPLETA DELL'ERBARIO */}
+                <div className="border-t border-[#e2e2d8] pt-5 flex items-center justify-center mt-2.5">
+                  <button
+                    onClick={handleMarkUpdatesAsSeen}
+                    className="w-full sm:w-auto px-10 py-3.5 bg-[#2d3a27] hover:bg-[#1e271a] text-white font-bold rounded-full shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer group text-sm animate-pulse"
+                  >
+                    {hasNewUpdates ? "Guarda gli aggiornamenti" : "Visualizza il diario botanico"}
+                    <ChevronRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          );
+        })()}
+      </AnimatePresence>
+
       {/* HEADER / NAVIGATION BAR */}
-      <header className="bento-card px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-4 bg-white">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-[#2d3a27] rounded-xl text-white flex items-center justify-center">
-            <Sprout className="w-5 h-5" />
+      <header className="bento-card p-5 bg-white border border-[#e2e2d8] rounded-[28px] flex flex-col md:flex-row items-start md:items-center justify-between gap-5 shadow-[0_2px_8px_rgba(45,58,39,0.02)]">
+        {/* Left Brand Block */}
+        <div className="flex items-center gap-4 w-full md:w-auto text-left">
+          {/* Brand Icon */}
+          <div className="p-3 bg-[#2d3a27] rounded-[22px] text-white flex items-center justify-center shrink-0 w-[54px] h-[54px]">
+            <Sprout className="w-7 h-7" />
           </div>
-          <div>
-            <h1 className="text-xl font-serif italic text-[#2d3a27] font-semibold tracking-tight">Flora — <span className="font-light not-italic text-sage-600">Botanical Archive</span></h1>
-            <p className="text-[10px] font-mono tracking-wider uppercase text-sage-500 flex items-center gap-1.5">
-              <span>{state.settings.gardenName.includes(state.settings.userName) ? state.settings.gardenName : `${state.settings.gardenName} di ${state.settings.userName}`}</span>
-              <span className={`inline-block w-1.5 h-1.5 rounded-full ${isReadOnlyMode ? "bg-[#d68a56]" : "bg-[#7e8c69] animate-ping"}`} title={isReadOnlyMode ? "Serra in sola lettura" : "Sincronizzato"}></span>
-              {isReadOnlyMode ? (
-                <span className="text-[9px] text-amber-700 font-bold">shared view-only</span>
-              ) : (
-                <span className="text-[9px] text-[#7e8c69]">autosave activated</span>
-              )}
-            </p>
+          {/* Brand Text Content */}
+          <div className="flex flex-col min-w-0">
+            <h1 className="text-xl sm:text-2xl font-serif text-[#2d3a27] font-semibold tracking-tight leading-none text-left">
+              <span className="italic">Flora</span> <span className="font-normal not-italic text-stone-500 font-serif">— Botanical Archive</span>
+            </h1>
+            
+            {/* Metadata columns with absolute alignment conformity to the user's mockup */}
+            <div className="flex items-center gap-x-6 mt-2 text-[10px] font-mono tracking-wider text-stone-500 uppercase leading-snug">
+              <div>
+                <div className="text-stone-400 font-bold text-[9px] tracking-wider leading-none">ORTO BOTANICO DI</div>
+                <div className="text-stone-500 font-bold text-[11px] tracking-wide mt-1 leading-none">
+                  {state.settings.userName.toUpperCase()}
+                </div>
+              </div>
+              
+              <div className="flex items-start gap-1.5">
+                <div className={`w-2 h-2 rounded-full mt-1 shrink-0 ${isReadOnlyMode ? "bg-stone-300" : "bg-[#7e8c69] animate-[pulse_3s_infinite]"}`}></div>
+                <div>
+                  <div className="text-stone-400 font-bold text-[9px] tracking-wider leading-none">{isReadOnlyMode ? "SHARED" : "AUTOSAVE"}</div>
+                  <div className="text-stone-500 font-bold text-[11px] tracking-wide mt-1 leading-none">{isReadOnlyMode ? "SHARED" : "ACTIVATED"}</div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
         {/* Sync Indicator & Quick Actions */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
           {/* Sistema Sincronizzato Live pill */}
           {isReadOnlyMode ? (
-            <div className="bg-[#5a5a40] text-white px-4 py-2 rounded-full text-[11px] font-semibold flex items-center gap-2 shadow-[0_2px_8px_rgba(90,90,64,0.05)]">
-              <div className="w-1.5 h-1.5 bg-[#b2cfa5] rounded-full animate-pulse"></div>
-              <span>Serra Condivisa (Live)</span>
+            <div className="bg-[#7e8c69] text-white px-4 py-2.5 rounded-full text-[11px] font-semibold flex items-center gap-2 shadow-sm shrink-0">
+              <div className="w-1.5 h-1.5 bg-[#4ade80] rounded-full animate-pulse shrink-0"></div>
+              <span>Sistema Sincronizzato Live</span>
             </div>
           ) : (
-            <div className={`text-white px-4 py-2 rounded-full text-[11px] font-semibold flex items-center gap-2 transition-all shadow-[0_2px_8px_rgba(90,90,64,0.05)] ${activeShareId ? "bg-emerald-750 animate-pulse" : "bg-[#7e8c69]"}`}>
-              <div className={`w-1.5 h-1.5 rounded-full ${activeShareId ? "bg-emerald-300" : "bg-[#00ff00] pulse-botanic"}`}></div>
-              <span>{activeShareId ? "Condividi & Sincronizza (Live)" : "Sistema Sincronizzato Live"}</span>
+            <div className="bg-[#7e8c69] text-white px-4 py-2.5 rounded-full text-[11px] font-semibold flex items-center gap-2 shadow-sm shrink-0">
+              <div className="w-1.5 h-1.5 bg-[#4ade80] rounded-full animate-pulse shrink-0"></div>
+              <span>Sistema Sincronizzato Live</span>
             </div>
           )}
 
-          {/* Se l'utente ha la condivisione attiva e desidera spegnerla per privacy */}
-          {activeShareId && !isReadOnlyMode && (
-            <button
-              onClick={() => {
-                if (confirm("Desideri disattivare la sincronizzazione in tempo reale per questo link condiviso? Chi visualizza continuerà a vedere lo stato salvato finora, ma non riceverà più aggiornamenti.")) {
-                  localStorage.removeItem("flora_active_share_id");
-                  setActiveShareId(null);
-                  showToast("Sincronizzazione della condivisione disattivata. 🛑");
-                }
-              }}
-              className="p-1 px-2.5 bg-rose-50 border border-rose-200 hover:bg-rose-100 rounded-full text-rose-700 transition-all cursor-pointer text-[10px] uppercase font-bold flex items-center gap-1 shadow-sm"
-              title="Disattiva sincronizzazione live del link di condivisione"
-            >
-              Spegni Sincronia
-            </button>
-          )}
+
 
           <button
             onClick={handleCopyShareLink}
-            className="flex items-center gap-1.5 p-2 px-3.5 bg-white border border-[#e2e2d8] rounded-full text-xs font-semibold text-sage-700 hover:bg-sage-50 transition-all shadow-[0_2px_8px_rgba(90,90,64,0.02)] cursor-pointer"
+            className="flex items-center gap-1.5 p-2 px-4 bg-white border border-[#e2e2d8] rounded-full text-xs font-semibold text-stone-700 hover:bg-[#fafaf7] transition-all shadow-sm cursor-pointer shrink-0"
             title="Copia link crittografato"
           >
-            <Share2 className="w-3.5 h-3.5 text-sage-500" />
+            <Share2 className="w-3.5 h-3.5 text-stone-500 shrink-0" />
             Condividi
           </button>
 
-          {isPwaInstalled ? (
-            <button
-              onClick={handleInstallClick}
-              className="flex items-center gap-1.5 p-2 px-3.5 bg-[#f0f4ee] border border-emerald-200 rounded-full text-xs font-semibold hover:bg-emerald-50 text-emerald-800 transition-all shadow-[0_2px_8px_rgba(90,90,64,0.02)] cursor-pointer"
-              title="Flora è già installata sul tuo schermo!"
-            >
-              <Check className="w-3.5 h-3.5 text-emerald-600" />
-              Installata 📱
-            </button>
-          ) : (
-            <button
-              onClick={handleInstallClick}
-              className="flex items-center gap-1.5 p-2 px-3.5 bg-gradient-to-r from-sage-800 to-emerald-950 text-white border border-sage-700/40 rounded-full text-xs font-semibold hover:brightness-110 active:brightness-95 transition-all shadow-[0_2px_8px_rgba(90,90,64,0.1)] cursor-pointer"
-              title="Aggiungi Flora alla schermata home per usarla offline a schermo intero!"
-            >
-              <Smartphone className="w-3.5 h-3.5 text-emerald-300 animate-pulse" />
-              Installa 📱
-            </button>
-          )}
-
           {!isReadOnlyMode && (
-            <div className="flex items-center gap-1.5">
+            <>
               <button
                 onClick={handleDownloadZIP}
-                className="flex items-center gap-1.5 p-2 px-3.5 bg-emerald-50 border border-emerald-200/50 rounded-full text-xs font-semibold text-emerald-800 hover:bg-emerald-100 transition-all cursor-pointer"
+                className="flex items-center gap-1.5 p-2 px-4 bg-[#eefcf3] border border-[#d3f4e3] rounded-full text-xs font-semibold text-[#137333] hover:bg-emerald-100/60 transition-all cursor-pointer shrink-0"
                 title="Scarica tutti i dati della tua serra come archivio compresso ZIP"
               >
-                <Download className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
+                <Download className="w-3.5 h-3.5 text-[#137333] shrink-0" />
                 Scarica ZIP
               </button>
               <label
                 htmlFor="zip-state-upload"
-                className="flex items-center gap-1.5 p-2 px-3.5 bg-stone-50 border border-stone-200/50 rounded-full text-xs font-semibold text-stone-800 hover:bg-stone-100 transition-all cursor-pointer"
+                className="flex items-center gap-1.5 p-2 px-4 bg-white border border-[#e2e2d8] rounded-full text-xs font-semibold text-stone-700 hover:bg-stone-50 transition-all cursor-pointer shrink-0"
                 title="Seleziona un archivio ZIP precedentemente salvato per ripristinare i dati della tua serra"
               >
-                <Upload className="w-3.5 h-3.5 text-stone-600" />
+                <Upload className="w-3.5 h-3.5 text-stone-500 shrink-0" />
                 Carica ZIP
               </label>
               <input
@@ -2027,23 +2317,23 @@ export default function App() {
                   (e.target as HTMLInputElement).value = "";
                 }}
               />
-            </div>
+            </>
           )}
 
           {!isReadOnlyMode && (
             <button
               onClick={() => setIsSettingsOpen(true)}
-              className="p-2 bg-white border border-[#e2e2d8] hover:bg-sage-50 rounded-full text-sage-600 transition-all cursor-pointer shadow-sm"
+              className="w-10 h-10 flex items-center justify-center bg-white border border-[#e2e2d8] hover:bg-sage-50 rounded-full text-stone-600 transition-all cursor-pointer shadow-sm shrink-0"
               title="Impostazioni orto"
             >
-              <Info className="w-4 h-4" />
+              <Info className="w-4.5 h-4.5 shrink-0" />
             </button>
           )}
         </div>
       </header>
 
       {/* BANNER INSTALLAZIONE APP (PWA) */}
-      {(!pwaBannerDismissed && !isPwaInstalled && (pwaPrompt || (typeof window !== "undefined" && /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream && !(window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone)))) && (
+      {(!isReadOnlyMode && !pwaBannerDismissed && !isPwaInstalled && (pwaPrompt || (typeof window !== "undefined" && /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream && !(window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone)))) && (
         <div id="pwa-install-banner" className="bento-card bg-gradient-to-r from-sage-800 to-[#1e271a] text-white p-5 flex flex-col md:flex-row items-center justify-between gap-4 relative overflow-hidden shadow-lg border border-sage-700/30">
           <div className="absolute top-0 right-0 p-8 opacity-5 pointer-events-none transform translate-x-4 -translate-y-4">
             <Sprout className="w-40 h-40 font-bold text-white" />
@@ -4896,80 +5186,6 @@ export default function App() {
                 className="max-w-full max-h-[85vh] object-contain rounded-2xl select-none shadow-2xl border border-white/10"
                 referrerPolicy="no-referrer"
               />
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* --- MODALE 13: HELPER INSTALLAZIONE APP --- */}
-      <AnimatePresence>
-        {isInstallModalOpen && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-3xl border border-[#e4e8e1] p-6 max-w-md w-full space-y-4 font-sans relative overflow-hidden"
-            >
-              <div className="flex justify-between items-center pb-2 border-b border-[#e4e8e1]">
-                <h3 className="font-serif font-bold text-[#2d3a2e] text-base flex items-center gap-1.5">
-                  <Smartphone className="w-5 h-5 text-emerald-700" />
-                  Installa Flora sul tuo Schermo
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => setIsInstallModalOpen(false)}
-                  className="p-1 hover:bg-[#e7ece5] rounded-xl cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="space-y-4 text-xs text-sage-700 leading-relaxed">
-                <div className="bg-emerald-50/50 border border-emerald-100 rounded-2xl p-4 flex gap-3">
-                  <Sparkles className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5 animate-pulse" />
-                  <div>
-                    <h4 className="font-semibold text-emerald-900 mb-0.5">Versione Offline & Schermo Intero ready!</h4>
-                    <p className="text-emerald-800 text-[11px]">Installando l'applicazione potrai aprirla istantaneamente, a tutto schermo, liberi dalla barra del browser, riducendo l'uso di dati e salvando le tue osservazioni anche in assenza di rete!</p>
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <h4 className="font-mono text-[10px] text-sage-400 uppercase tracking-wider">Istruzioni veloci per l'installazione:</h4>
-                  
-                  {/* Sezione iOS / Safari */}
-                  <div className="p-3 bg-stone-50 border border-stone-200/50 rounded-2xl space-y-2">
-                    <div className="flex items-center gap-2 font-semibold text-[#2d3a2e]">
-                      <span className="w-5 h-5 rounded-full bg-stone-200/80 text-stone-700 flex items-center justify-center text-[10px] font-mono">iOS</span>
-                      <span>Dispositivi Apple iPhone / iPad</span>
-                    </div>
-                    <p className="text-[11px] text-stone-600 pl-7">
-                      Tocca l'icona <span className="font-bold underline text-sage-800">Condividi</span> di Safari (il quadrato con la freccia verso l'alto 📤) dal menu inferiore e seleziona <span className="font-bold text-sage-900 bg-sage-100/65 px-1.5 py-0.5 rounded-md">"Aggiungi alla schermata Home"</span>.
-                    </p>
-                  </div>
-
-                  {/* Sezione Android & Desktop */}
-                  <div className="p-3 bg-stone-50 border border-stone-200/50 rounded-2xl space-y-2">
-                    <div className="flex items-center gap-2 font-semibold text-[#2d3a2e]">
-                      <span className="w-5 h-5 rounded-full bg-stone-200/80 text-stone-700 flex items-center justify-center text-[10px] font-mono">AND</span>
-                      <span>Dispositivi Android & PC Google Chrome</span>
-                    </div>
-                    <p className="text-[11px] text-stone-600 pl-7">
-                      Fai clic sui <span className="font-bold text-sage-800">tre puntini</span> in alto a destra nel browser e seleziona <span className="font-bold text-sage-900 bg-sage-100/65 px-1.5 py-0.5 rounded-md">"Aggiungi a schermata Home"</span> oppure <span className="font-bold text-sage-900 bg-sage-100/65 px-1.5 py-0.5 rounded-md">"Installa applicazione"</span>.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsInstallModalOpen(false)}
-                  className="w-full py-2.5 bg-[#2d3a2e] hover:bg-[#1e271a] text-[#f4f6f3] font-serif font-semibold tracking-tight text-center rounded-xl cursor-pointer shadow-sm transition-all text-xs"
-                >
-                  Ho capito, grazie! 🌿
-                </button>
-              </div>
             </motion.div>
           </div>
         )}
