@@ -37,7 +37,8 @@ import {
   Skull,
   HeartOff,
   ArrowLeft,
-  History
+  History,
+  Smartphone
 } from "lucide-react";
 import { JournalState, Plant, CareActivity, PlantStatus, PlantOrigin, DiaryEntry, SmartTracker } from "./types";
 import { PRESET_PLANTS, PRESET_ACTIVITIES } from "./data/presetPlants";
@@ -224,7 +225,12 @@ export default function App() {
     }
     return false;
   });
-  const [isPwaInstalled, setIsPwaInstalled] = useState(false);
+  const [isPwaInstalled, setIsPwaInstalled] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true;
+    }
+    return false;
+  });
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
 
   // Stati per Piante Morte e Memoriale
@@ -1848,6 +1854,27 @@ export default function App() {
     }
   };
 
+  // Funzione per gestire l'inizio dell'installazione dell'applicazione (PWA)
+  const handleInstallClick = () => {
+    if (isPwaInstalled) {
+      showToast("Flora è già installata sullo Schermo ed è pronta offline! 🌿📱");
+      return;
+    }
+    if (pwaPrompt) {
+      pwaPrompt.prompt();
+      pwaPrompt.userChoice.then((choiceResult: any) => {
+        if (choiceResult.outcome === "accepted") {
+          console.log("L'utente ha accettato l'installazione di Flora.");
+          setIsPwaInstalled(true);
+          showToast("Flora installata con successo sullo Schermo! 🌿📱");
+        }
+        setPwaPrompt(null);
+      });
+    } else {
+      setIsInstallModalOpen(true);
+    }
+  };
+
   // Ripristina Orto e Ricarica presets
   const handleResetOrto = () => {
     if (confirm("Attenzione: questo azzererà tutte le modifiche e le foto tornando alle piante originarie di default. Procedere?")) {
@@ -1944,15 +1971,6 @@ export default function App() {
           )}
 
           <button
-            onClick={() => setIsInstallModalOpen(true)}
-            className="flex items-center gap-1.5 p-2 px-3.5 bg-gradient-to-r from-emerald-800 to-sage-800 border border-emerald-700/30 rounded-full text-xs font-bold text-white hover:opacity-95 transition-all shadow-md cursor-pointer animate-[pulse_2.5s_infinite]"
-            title="Installa Flora sul tuo dispositivo"
-          >
-            <span className="text-sm">🌿📲</span>
-            Installa App
-          </button>
-
-          <button
             onClick={handleCopyShareLink}
             className="flex items-center gap-1.5 p-2 px-3.5 bg-white border border-[#e2e2d8] rounded-full text-xs font-semibold text-sage-700 hover:bg-sage-50 transition-all shadow-[0_2px_8px_rgba(90,90,64,0.02)] cursor-pointer"
             title="Copia link crittografato"
@@ -1960,6 +1978,26 @@ export default function App() {
             <Share2 className="w-3.5 h-3.5 text-sage-500" />
             Condividi
           </button>
+
+          {isPwaInstalled ? (
+            <button
+              onClick={handleInstallClick}
+              className="flex items-center gap-1.5 p-2 px-3.5 bg-[#f0f4ee] border border-emerald-200 rounded-full text-xs font-semibold hover:bg-emerald-50 text-emerald-800 transition-all shadow-[0_2px_8px_rgba(90,90,64,0.02)] cursor-pointer"
+              title="Flora è già installata sul tuo schermo!"
+            >
+              <Check className="w-3.5 h-3.5 text-emerald-600" />
+              Installata 📱
+            </button>
+          ) : (
+            <button
+              onClick={handleInstallClick}
+              className="flex items-center gap-1.5 p-2 px-3.5 bg-gradient-to-r from-sage-800 to-emerald-950 text-white border border-sage-700/40 rounded-full text-xs font-semibold hover:brightness-110 active:brightness-95 transition-all shadow-[0_2px_8px_rgba(90,90,64,0.1)] cursor-pointer"
+              title="Aggiungi Flora alla schermata home per usarla offline a schermo intero!"
+            >
+              <Smartphone className="w-3.5 h-3.5 text-emerald-300 animate-pulse" />
+              Installa 📱
+            </button>
+          )}
 
           {!isReadOnlyMode && (
             <div className="flex items-center gap-1.5">
@@ -2801,121 +2839,6 @@ export default function App() {
           <span>Offline support & JSON backups</span>
         </div>
       </footer>
-
-      {/* --- MODALE INSTALLAZIONE PWA (DEDICATO CORREDO) --- */}
-      <AnimatePresence>
-        {isInstallModalOpen && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center p-4 z-[90]">
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-3xl border border-[#e4e8e1] p-6 max-w-md w-full space-y-4 shadow-2xl relative overflow-hidden"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* Sfondo decorativo in alto */}
-              <div className="absolute top-0 left-0 right-0 h-2 bg-gradient-to-r from-emerald-800 via-sage-750 to-[#1e271a]" />
-              
-              <div className="flex justify-between items-start pt-2">
-                <div className="flex items-center gap-2">
-                  <div className="p-2 bg-emerald-50 rounded-xl">
-                    <span className="text-xl">📲</span>
-                  </div>
-                  <div>
-                    <h3 className="font-serif font-bold text-[#2d3a2e] text-lg">Installa l'App di Flora</h3>
-                    <p className="text-[10px] font-mono uppercase tracking-wider text-sage-400">PWA • Schermata Home</p>
-                  </div>
-                </div>
-                <button 
-                  onClick={() => setIsInstallModalOpen(false)} 
-                  className="p-1.5 hover:bg-[#e7ece5] rounded-xl text-sage-500 hover:text-sage-800 transition-all cursor-pointer"
-                  title="Chiudi guida"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="space-y-4 text-xs text-sage-700 mt-2">
-                <p className="leading-relaxed">
-                  Aggiungi <strong>Flora</strong> alla schermata home del tuo smartphone o computer! Funzionerà come un'app nativa: a schermo intero, velocissima, e con accesso completo offline alle tue piante. 🌱
-                </p>
-
-                {/* Se installazione nativa è disponibile direttamente tramite browser */}
-                {pwaPrompt ? (
-                  <div className="p-4 bg-emerald-50/70 border border-emerald-200/50 rounded-2xl flex flex-col items-center text-center gap-3">
-                    <p className="font-medium text-emerald-900">
-                      Il tuo browser supporta l'installazione istantanea! ✨
-                    </p>
-                    <button
-                      onClick={() => {
-                        if (pwaPrompt) {
-                          pwaPrompt.prompt();
-                          pwaPrompt.userChoice.then((choiceResult: any) => {
-                            if (choiceResult.outcome === "accepted") {
-                              setIsPwaInstalled(true);
-                              setIsInstallModalOpen(false);
-                            }
-                            setPwaPrompt(null);
-                          });
-                        }
-                      }}
-                      className="px-5 py-2.5 bg-gradient-to-r from-emerald-700 to-sage-800 text-white rounded-full font-bold shadow-md hover:shadow-lg hover:scale-[1.02] active:scale-95 transition-all text-sm cursor-pointer flex items-center gap-2"
-                    >
-                      <span>📥 Installa Ora Flora</span>
-                    </button>
-                  </div>
-                ) : (
-                  <div className="p-3 bg-stone-50 border border-stone-200/50 rounded-xl text-center text-[11px] text-stone-500 leading-relaxed">
-                    💡 <strong>Consiglio utile:</strong> Se navighi l'app dentro l'arena di AI Studio, apri Flora in una nuova scheda nel browser per poterla installare direttamente!
-                  </div>
-                )}
-
-                {/* Sottoguide dispositivi */}
-                <div className="space-y-3 pt-2 border-t border-sage-100/70">
-                  <h4 className="font-serif font-bold text-sage-800 text-sm flex items-center gap-1.5">
-                    <span>📱</span> Come installare sul tuo dispositivo:
-                  </h4>
-
-                  {/* Android & PC */}
-                  <div className="p-3.5 bg-[#fbfcfa] border border-sage-100 rounded-2xl space-y-2">
-                    <p className="font-semibold text-sage-900 flex items-center gap-1">
-                      <span className="text-sm">🤖</span> Android, Chrome & PC (Windows/Mac/Linux)
-                    </p>
-                    <ol className="list-decimal pl-4 space-y-1.5 text-stone-605 text-[11px] leading-relaxed">
-                      <li>Tocca i <strong>tre puntini (⋮ o ⋯)</strong> in alto a destra nel browser.</li>
-                      <li>
-                        Seleziona <strong>"Aggiungi a schermata Home"</strong> oppure <strong>"Installa app"</strong>.
-                      </li>
-                      <li>Conferma premendo su <strong>"Installa"</strong> per aggiungere Flora al tuo smartphone!</li>
-                    </ol>
-                  </div>
-
-                  {/* iOS */}
-                  <div className="p-3.5 bg-[#fbfcfa] border border-sage-100 rounded-2xl space-y-2">
-                    <p className="font-semibold text-sage-900 flex items-center gap-1">
-                      <span className="text-sm">🍏</span> Apple iOS (iPhone & iPad - Safari)
-                    </p>
-                    <ol className="list-decimal pl-4 space-y-1.5 text-stone-605 text-[11px] leading-relaxed">
-                      <li>Tocca il pulsante di <strong>Condividi</strong> (l'icona del quadrattino con la freccia in alto <span className="p-0.5 bg-stone-100 border border-stone-200 rounded text-[9px]">⇧</span> in Safari).</li>
-                      <li>Scorri l'elenco verso il basso e tocca <strong>"Aggiungi alla schermata Home"</strong>.</li>
-                      <li>Fai clic su <strong>"Aggiungi"</strong> in alto a destra per confermare l'installazione.</li>
-                    </ol>
-                  </div>
-                </div>
-
-                <div className="flex justify-end pt-2">
-                  <button
-                    onClick={() => setIsInstallModalOpen(false)}
-                    className="px-4 py-2 border border-[#e4e8e1] hover:bg-[#e7ece5] text-sage-700 font-semibold rounded-full transition-all cursor-pointer text-xs"
-                  >
-                    Ho Capito
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
 
       {/* --- MODALE 1: IMPOSTAZIONI ORTO --- */}
       <AnimatePresence>
@@ -4931,17 +4854,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* FLOATING INSTALL BUTTON (MOBILE DEDICATO) */}
-      <div className="fixed bottom-6 left-6 z-[45] md:hidden">
-        <button
-          onClick={() => setIsInstallModalOpen(true)}
-          className="p-3 bg-gradient-to-r from-emerald-800 to-sage-800 text-white rounded-full shadow-lg flex items-center justify-center border border-emerald-700/30 active:scale-95 transition-all text-base cursor-pointer animate-[bounce_3s_infinite]"
-          title="Installa l'App di Flora sul tuo dispositivo"
-        >
-          <span className="text-xl">📲</span>
-        </button>
-      </div>
-
       {/* --- TOAST NOTIFICA SYSTEM --- */}
       <AnimatePresence>
         {toastMessage && (
@@ -4984,6 +4896,80 @@ export default function App() {
                 className="max-w-full max-h-[85vh] object-contain rounded-2xl select-none shadow-2xl border border-white/10"
                 referrerPolicy="no-referrer"
               />
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* --- MODALE 13: HELPER INSTALLAZIONE APP --- */}
+      <AnimatePresence>
+        {isInstallModalOpen && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-3xl border border-[#e4e8e1] p-6 max-w-md w-full space-y-4 font-sans relative overflow-hidden"
+            >
+              <div className="flex justify-between items-center pb-2 border-b border-[#e4e8e1]">
+                <h3 className="font-serif font-bold text-[#2d3a2e] text-base flex items-center gap-1.5">
+                  <Smartphone className="w-5 h-5 text-emerald-700" />
+                  Installa Flora sul tuo Schermo
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setIsInstallModalOpen(false)}
+                  className="p-1 hover:bg-[#e7ece5] rounded-xl cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-4 text-xs text-sage-700 leading-relaxed">
+                <div className="bg-emerald-50/50 border border-emerald-100 rounded-2xl p-4 flex gap-3">
+                  <Sparkles className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5 animate-pulse" />
+                  <div>
+                    <h4 className="font-semibold text-emerald-900 mb-0.5">Versione Offline & Schermo Intero ready!</h4>
+                    <p className="text-emerald-800 text-[11px]">Installando l'applicazione potrai aprirla istantaneamente, a tutto schermo, liberi dalla barra del browser, riducendo l'uso di dati e salvando le tue osservazioni anche in assenza di rete!</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="font-mono text-[10px] text-sage-400 uppercase tracking-wider">Istruzioni veloci per l'installazione:</h4>
+                  
+                  {/* Sezione iOS / Safari */}
+                  <div className="p-3 bg-stone-50 border border-stone-200/50 rounded-2xl space-y-2">
+                    <div className="flex items-center gap-2 font-semibold text-[#2d3a2e]">
+                      <span className="w-5 h-5 rounded-full bg-stone-200/80 text-stone-700 flex items-center justify-center text-[10px] font-mono">iOS</span>
+                      <span>Dispositivi Apple iPhone / iPad</span>
+                    </div>
+                    <p className="text-[11px] text-stone-600 pl-7">
+                      Tocca l'icona <span className="font-bold underline text-sage-800">Condividi</span> di Safari (il quadrato con la freccia verso l'alto 📤) dal menu inferiore e seleziona <span className="font-bold text-sage-900 bg-sage-100/65 px-1.5 py-0.5 rounded-md">"Aggiungi alla schermata Home"</span>.
+                    </p>
+                  </div>
+
+                  {/* Sezione Android & Desktop */}
+                  <div className="p-3 bg-stone-50 border border-stone-200/50 rounded-2xl space-y-2">
+                    <div className="flex items-center gap-2 font-semibold text-[#2d3a2e]">
+                      <span className="w-5 h-5 rounded-full bg-stone-200/80 text-stone-700 flex items-center justify-center text-[10px] font-mono">AND</span>
+                      <span>Dispositivi Android & PC Google Chrome</span>
+                    </div>
+                    <p className="text-[11px] text-stone-600 pl-7">
+                      Fai clic sui <span className="font-bold text-sage-800">tre puntini</span> in alto a destra nel browser e seleziona <span className="font-bold text-sage-900 bg-sage-100/65 px-1.5 py-0.5 rounded-md">"Aggiungi a schermata Home"</span> oppure <span className="font-bold text-sage-900 bg-sage-100/65 px-1.5 py-0.5 rounded-md">"Installa applicazione"</span>.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsInstallModalOpen(false)}
+                  className="w-full py-2.5 bg-[#2d3a2e] hover:bg-[#1e271a] text-[#f4f6f3] font-serif font-semibold tracking-tight text-center rounded-xl cursor-pointer shadow-sm transition-all text-xs"
+                >
+                  Ho capito, grazie! 🌿
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
