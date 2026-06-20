@@ -1866,83 +1866,118 @@ export default function App() {
       });
 
       let shareUrl = "";
-      
-      // Tentativo principale: salvataggio sul server per un link ultracorto (ottimizzato e privo di limiti Vercel)
-      try {
-        const response = await fetch(getApiUrl("/api/shares"), {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: stateString
-        });
-        if (response.ok) {
-          const resData = await response.json();
-          if (resData && resData.id) {
-            shareUrl = `${getCanonicalShareBaseUrl()}#sharez=${resData.id}`;
-          }
-        }
-      } catch (err) {
-        console.warn("Server-side share non disponibile, provo a salvare direttamente da client su Firestore:", err);
-      }
 
-      // Tentativo 2: Salvataggio diretto nel nostro database cloud Firebase Firestore (perfetto e stabilissimo per Vercel!)
-      if (!shareUrl) {
+      if (activeShareId) {
+        // Se esiste già una condivisione/sincronia attiva, riutilizziamo lo stesso ID in modo che il link non cambi mai!
+        shareUrl = `${getCanonicalShareBaseUrl()}#sharez=${activeShareId}`;
+
+        const payload = {
+          id: activeShareId,
+          plants: sanitizedPlants,
+          activities: sanitizedActivities,
+          smartTrackers: sanitizedTrackers,
+          settings: state.settings,
+          updatedAt: new Date().toISOString()
+        };
+
+        // Aggiorniamo sia sul server che su Firestore in tempo reale
         try {
-          const { collection, addDoc } = await import("firebase/firestore");
+          await fetch(getApiUrl("/api/shares"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+        } catch (serverErr) {
+          console.warn("Errore aggiornamento Express al click di condivisione:", serverErr);
+        }
+
+        try {
+          const { doc, setDoc } = await import("firebase/firestore");
           const { db } = await import("./firebase");
-          
-          const firestorePayload = JSON.parse(stateString);
-          firestorePayload.createdAt = new Date().toISOString();
-          
-          const docRef = await addDoc(collection(db, "shares"), firestorePayload);
-          
-          if (docRef.id) {
-            shareUrl = `${getCanonicalShareBaseUrl()}#sharez=${docRef.id}`;
-          }
+          const docRef = doc(db, "shares", activeShareId);
+          await setDoc(docRef, payload, { merge: true });
         } catch (firestoreErr) {
-          console.error("Errore salvataggio diretto su Firestore:", firestoreErr);
+          console.warn("Errore aggiornamento Firestore al click di condivisione:", firestoreErr);
         }
-      }
-
-      // Tentativo 3: Se Firestore e il server falliscono, salviamo direttamente su KVDB cloud da client
-      if (!shareUrl) {
+      } else {
+        // Altrimenti, creiamo una nuova condivisione
+        // Tentativo principale: salvataggio sul server per un link ultracorto (ottimizzato e privo di limiti Vercel)
         try {
-          const bucketRes = await fetch("https://kvdb.io", { method: "POST" });
-          if (bucketRes.ok) {
-            const bucketId = (await bucketRes.text()).trim();
-            if (bucketId && bucketId.length > 5) {
-              const saveRes = await fetch(`https://kvdb.io/${bucketId}/state`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: stateString
-              });
-              if (saveRes.ok) {
-                shareUrl = `${getCanonicalShareBaseUrl()}#sharez=${bucketId}`;
-              }
+          const response = await fetch(getApiUrl("/api/shares"), {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: stateString
+          });
+          if (response.ok) {
+            const resData = await response.json();
+            if (resData && resData.id) {
+              shareUrl = `${getCanonicalShareBaseUrl()}#sharez=${resData.id}`;
             }
           }
-        } catch (kvErr) {
-          console.error("Errore salvataggio diretto su KVDB cloud:", kvErr);
+        } catch (err) {
+          console.warn("Server-side share non disponibile, provo a salvare direttamente da client su Firestore:", err);
         }
-      }
 
-      // Fallback Estremo: se anche il cloud fallisce, genera un link zip compresso URL-safe locale
-      if (!shareUrl) {
-        const zip = new JSZip();
-        zip.file("fb.json", stateString);
-        const base64Zip = await zip.generateAsync({
-          type: "base64",
-          compression: "DEFLATE",
-          compressionOptions: { level: 9 }
-        });
+        // Tentativo 2: Salvataggio directo nel nostro database cloud Firebase Firestore (perfetto e stabilissimo per Vercel!)
+        if (!shareUrl) {
+          try {
+            const { collection, addDoc } = await import("firebase/firestore");
+            const { db } = await import("./firebase");
+            
+            const firestorePayload = JSON.parse(stateString);
+            firestorePayload.createdAt = new Date().toISOString();
+            
+            const docRef = await addDoc(collection(db, "shares"), firestorePayload);
+            
+            if (docRef.id) {
+              shareUrl = `${getCanonicalShareBaseUrl()}#sharez=${docRef.id}`;
+            }
+          } catch (firestoreErr) {
+            console.error("Errore salvataggio diretto su Firestore:", firestoreErr);
+          }
+        }
 
-        const urlSafeBase64 = base64Zip
-          .replace(/\+/g, "-")
-          .replace(/\//g, "_")
-          .replace(/=/g, "");
+        // Tentativo 3: Se Firestore e il server falliscono, salviamo direttamente su KVDB cloud da client
+        if (!shareUrl) {
+          try {
+            const bucketRes = await fetch("https://kvdb.io", { method: "POST" });
+            if (bucketRes.ok) {
+              const bucketId = (await bucketRes.text()).trim();
+              if (bucketId && bucketId.length > 5) {
+                const saveRes = await fetch(`https://kvdb.io/${bucketId}/state`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: stateString
+                });
+                if (saveRes.ok) {
+                  shareUrl = `${getCanonicalShareBaseUrl()}#sharez=${bucketId}`;
+                }
+              }
+            }
+          } catch (kvErr) {
+            console.error("Errore salvataggio diretto su KVDB cloud:", kvErr);
+          }
+        }
 
-        shareUrl = `${getCanonicalShareBaseUrl()}#sharez=${urlSafeBase64}`;
+        // Fallback Estremo: se anche il cloud fallisce, genera un link zip compresso URL-safe locale
+        if (!shareUrl) {
+          const zip = new JSZip();
+          zip.file("fb.json", stateString);
+          const base64Zip = await zip.generateAsync({
+            type: "base64",
+            compression: "DEFLATE",
+            compressionOptions: { level: 9 }
+          });
+
+          const urlSafeBase64 = base64Zip
+            .replace(/\+/g, "-")
+            .replace(/\//g, "_")
+            .replace(/=/g, "");
+
+          shareUrl = `${getCanonicalShareBaseUrl()}#sharez=${urlSafeBase64}`;
+        }
       }
 
       // Attivazione immediata del sistema di Sincronizzazione Live per l'autore
